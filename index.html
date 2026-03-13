@@ -6,7 +6,9 @@
     <title>TransportSim</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; font-family: 'Courier New', monospace; }
+
+      /* ── Game canvas ─────────────────────────────────── */
       #game-canvas {
         display: block;
         width: 100%;
@@ -29,14 +31,368 @@
         background: #333;
         color: #fff;
       }
-      #ui-container button:hover {
-        background: #555;
+      #ui-container button:hover { background: #555; }
+
+      /* ── Landing overlay ─────────────────────────────── */
+      #landing {
+        position: absolute;
+        inset: 0;
+        background: #0a0a0a;
+        z-index: 900;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        overflow-y: auto;
+        padding: 32px 16px 48px;
+      }
+      .ld-inner {
+        width: 660px;
+        max-width: 100%;
+      }
+
+      /* header */
+      .ld-header {
+        text-align: center;
+        padding: 24px 0 28px;
+        border-bottom: 1px solid #222;
+        margin-bottom: 28px;
+      }
+      .ld-logo { font-size: 52px; line-height: 1; margin-bottom: 10px; }
+      .ld-title {
+        font-size: 32px;
+        font-weight: bold;
+        letter-spacing: 6px;
+        color: #fff;
+        text-transform: uppercase;
+      }
+      .ld-sub {
+        color: #555;
+        font-size: 12px;
+        letter-spacing: 3px;
+        margin-top: 8px;
+      }
+
+      /* tabs */
+      .ld-tabs { display: flex; gap: 0; margin-bottom: 0; }
+      .ld-tab {
+        flex: 1;
+        padding: 10px 6px;
+        background: #111;
+        border: 1px solid #2a2a2a;
+        border-bottom: none;
+        color: #555;
+        font-family: monospace;
+        font-size: 12px;
+        cursor: pointer;
+        letter-spacing: 1px;
+        transition: color 0.1s, background 0.1s;
+      }
+      .ld-tab:hover:not(.active) { background: #181818; color: #888; }
+      .ld-tab.active { background: #1a1a1a; color: #fff; border-color: #4488cc; border-bottom-color: #1a1a1a; }
+
+      /* panel */
+      .ld-panel {
+        background: #1a1a1a;
+        border: 1px solid #4488cc;
+        border-top: none;
+        padding: 28px 28px 32px;
+      }
+      .ld-pane { display: none; }
+      .ld-pane.active { display: block; }
+
+      /* ── New Game pane ───────────────────────── */
+      .ld-label {
+        color: #888;
+        font-size: 11px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+      .ld-sizes {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 24px;
+      }
+      .size-btn {
+        padding: 14px 8px;
+        background: #111;
+        border: 1px solid #333;
+        color: #888;
+        font-family: monospace;
+        font-size: 12px;
+        cursor: pointer;
+        text-align: center;
+        transition: border-color 0.1s, color 0.1s;
+      }
+      .size-btn:hover { border-color: #555; color: #aaa; }
+      .size-btn.selected { border-color: #4488cc; color: #fff; background: #162233; }
+      .size-btn .sz-name { font-size: 13px; font-weight: bold; display: block; margin-bottom: 4px; }
+      .size-btn .sz-dim  { font-size: 10px; color: #555; display: block; margin-bottom: 2px; }
+      .size-btn.selected .sz-dim { color: #4488cc; }
+      .size-btn .sz-desc { font-size: 10px; color: #444; display: block; }
+      .size-btn.selected .sz-desc { color: #668; }
+
+      .ld-seed-row { display: flex; gap: 12px; align-items: center; margin-bottom: 28px; }
+      .ld-seed-row input {
+        flex: 1;
+        background: #111;
+        border: 1px solid #333;
+        color: #ccc;
+        font-family: monospace;
+        font-size: 13px;
+        padding: 9px 12px;
+        outline: none;
+      }
+      .ld-seed-row input:focus { border-color: #4488cc; }
+      .ld-seed-row input::placeholder { color: #444; }
+
+      .ld-start-btn {
+        width: 100%;
+        padding: 16px;
+        background: #163040;
+        border: 1px solid #4488cc;
+        color: #4af;
+        font-family: monospace;
+        font-size: 15px;
+        font-weight: bold;
+        cursor: pointer;
+        letter-spacing: 2px;
+        transition: background 0.15s, color 0.15s;
+      }
+      .ld-start-btn:hover { background: #1a4a6a; color: #8cf; }
+
+      /* ── Load Game pane ─────────────────────── */
+      .ld-slots { display: flex; flex-direction: column; gap: 10px; }
+      .save-slot {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        background: #111;
+        border: 1px solid #2a2a2a;
+        padding: 14px 16px;
+      }
+      .save-slot.has-save { border-color: #2a3a2a; }
+      .slot-icon { font-size: 24px; flex-shrink: 0; }
+      .slot-info { flex: 1; min-width: 0; }
+      .slot-name { color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 3px; }
+      .slot-meta { color: #555; font-size: 11px; }
+      .slot-meta span { color: #888; margin-right: 12px; }
+      .slot-empty { color: #333; font-size: 12px; font-style: italic; }
+      .slot-actions { display: flex; gap: 8px; flex-shrink: 0; }
+      .slot-load-btn {
+        padding: 7px 16px;
+        background: #163040;
+        border: 1px solid #4488cc;
+        color: #4af;
+        font-family: monospace;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .slot-load-btn:hover { background: #1a4a6a; }
+      .slot-del-btn {
+        padding: 7px 10px;
+        background: #2a1111;
+        border: 1px solid #6a2222;
+        color: #f66;
+        font-family: monospace;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .slot-del-btn:hover { background: #3a1818; }
+
+      /* ── How to Play pane ──────────────────── */
+      .ld-tut { color: #bbb; font-size: 13px; line-height: 1.7; }
+      .ld-tut h3 {
+        color: #4af;
+        font-size: 12px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        margin: 22px 0 8px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid #222;
+      }
+      .ld-tut h3:first-child { margin-top: 0; }
+      .ld-tut p { margin-bottom: 8px; color: #999; }
+      .ld-tut ul { padding-left: 20px; margin-bottom: 8px; }
+      .ld-tut li { margin-bottom: 4px; color: #999; }
+      .ld-tut li b, .ld-tut p b { color: #ccc; }
+      .ld-tut .chain-box {
+        background: #111;
+        border: 1px solid #2a2a2a;
+        padding: 12px 16px;
+        margin: 8px 0;
+        font-size: 12px;
+        color: #666;
+        line-height: 2;
+      }
+      .ld-tut .chain-box span { color: #4af; }
+      .ld-tut .chain-box .arrow { color: #444; }
+      .ld-tut kbd {
+        background: #222;
+        border: 1px solid #444;
+        padding: 1px 6px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #ccc;
+      }
+      .ld-tut .tip-box {
+        background: #121a12;
+        border-left: 3px solid #2a6a2a;
+        padding: 8px 12px;
+        margin: 10px 0;
+        color: #6a6;
+        font-size: 12px;
+      }
+
+      /* ── Footer ─────────────────────────────── */
+      .ld-footer {
+        text-align: center;
+        color: #333;
+        font-size: 11px;
+        margin-top: 24px;
+        letter-spacing: 1px;
       }
     </style>
   </head>
   <body>
     <canvas id="game-canvas"></canvas>
     <div id="ui-container"></div>
+
+    <!-- ════════════════ LANDING PAGE ════════════════ -->
+    <div id="landing">
+      <div class="ld-inner">
+
+        <div class="ld-header">
+          <div class="ld-logo">🚛</div>
+          <div class="ld-title">TransportSim</div>
+          <div class="ld-sub">BUILD NETWORKS &nbsp;·&nbsp; CONNECT CITIES &nbsp;·&nbsp; PROFIT</div>
+        </div>
+
+        <div class="ld-tabs">
+          <button class="ld-tab active" data-tab="new">🗺&nbsp; New Game</button>
+          <button class="ld-tab"        data-tab="load">💾&nbsp; Load Game</button>
+          <button class="ld-tab"        data-tab="how">📖&nbsp; How to Play</button>
+        </div>
+
+        <div class="ld-panel">
+
+          <!-- ═══ NEW GAME ═══ -->
+          <div class="ld-pane active" id="ld-pane-new">
+            <div class="ld-label">Map Size</div>
+            <div class="ld-sizes">
+              <button class="size-btn" data-size="small">
+                <span class="sz-name">Small</span>
+                <span class="sz-dim">128 × 128</span>
+                <span class="sz-desc">2 cities · quick game</span>
+              </button>
+              <button class="size-btn selected" data-size="normal">
+                <span class="sz-name">Normal</span>
+                <span class="sz-dim">200 × 200</span>
+                <span class="sz-desc">4 cities · recommended</span>
+              </button>
+              <button class="size-btn" data-size="large">
+                <span class="sz-name">Large</span>
+                <span class="sz-dim">280 × 280</span>
+                <span class="sz-desc">5 cities · long haul</span>
+              </button>
+              <button class="size-btn" data-size="huge">
+                <span class="sz-name">Huge</span>
+                <span class="sz-dim">360 × 360</span>
+                <span class="sz-desc">6 cities · epic scale</span>
+              </button>
+            </div>
+
+            <div class="ld-label">Seed (optional)</div>
+            <div class="ld-seed-row">
+              <input id="ld-seed-input" type="number" placeholder="Leave blank for a random map" min="0" max="999999" />
+            </div>
+
+            <button class="ld-start-btn" id="ld-start-btn">🚛 &nbsp; START NEW GAME</button>
+          </div>
+
+          <!-- ═══ LOAD GAME ═══ -->
+          <div class="ld-pane" id="ld-pane-load">
+            <div class="ld-slots" id="ld-slots">
+              <!-- Populated by main.ts -->
+            </div>
+          </div>
+
+          <!-- ═══ HOW TO PLAY ═══ -->
+          <div class="ld-pane" id="ld-pane-how">
+            <div class="ld-tut">
+
+              <h3>Overview</h3>
+              <p>Industries produce raw materials, processors transform them into goods, and <b>neighborhoods</b> and other consumers pay you to receive deliveries. Connect everything with roads, rail, ships, and planes to build a growing logistics empire.</p>
+              <p>Industries are grouped into <b>city clusters</b> spread across the map. Build road networks within each city for local hauls — then use trains, ships, or planes for long-distance bulk transport between cities.</p>
+
+              <h3>Controls</h3>
+              <ul>
+                <li><b>Pan</b>: Click and drag on empty map</li>
+                <li><b>Zoom</b>: Scroll wheel</li>
+                <li><b>Build</b>: Select a tool, then left-click (or drag)</li>
+                <li><b>Inspect</b>: Click on any tile or building with no tool active</li>
+              </ul>
+
+              <h3>Getting Started</h3>
+              <ul>
+                <li><b>1.</b> Place a <b>Depot</b> somewhere near the center of your first city</li>
+                <li><b>2.</b> Build <b>Roads</b> connecting industries you want to link (drag to paint)</li>
+                <li><b>3.</b> Place <b>Stations</b> adjacent to industries — they auto-link to the nearest one</li>
+                <li><b>4.</b> In the Depot panel, create a <b>Route</b>: pick a pickup station and a dropoff station</li>
+                <li><b>5.</b> Buy a <b>Truck</b> and assign it to that route — money starts flowing</li>
+              </ul>
+
+              <h3>Supply Chains</h3>
+              <p>Each chain ends at a final consumer that pays per delivery. Set up the full chain for maximum income:</p>
+              <div class="chain-box">
+                <span>Coal Mine</span> <span class="arrow">→</span> Coal <span class="arrow">→</span> <span>Power Plant</span><br>
+                <span>Coal Mine</span> <span class="arrow">→</span> Coal <span class="arrow">→</span> <span>Steel Mill</span> <span class="arrow">→</span> Steel <span class="arrow">→</span> <span>Factory</span> <span class="arrow">→</span> Goods <span class="arrow">→</span> <span>Neighborhood</span><br>
+                <span>Iron Mine</span> <span class="arrow">→</span> Iron <span class="arrow">→</span> <span>Smelter</span> <span class="arrow">→</span> Steel <span class="arrow">→</span> <span>Factory</span> <span class="arrow">→</span> Goods <span class="arrow">→</span> <span>Neighborhood</span><br>
+                <span>Forest</span> <span class="arrow">→</span> Wood <span class="arrow">→</span> <span>Sawmill</span> <span class="arrow">→</span> Goods <span class="arrow">→</span> <span>Neighborhood</span><br>
+                <span>Oil Well</span> <span class="arrow">→</span> Oil <span class="arrow">→</span> <span>Refinery</span> <span class="arrow">→</span> Goods <span class="arrow">→</span> <span>Neighborhood</span><br>
+                <span>Oil Well</span> <span class="arrow">→</span> Oil <span class="arrow">→</span> <span>Chem Plant</span> <span class="arrow">→</span> Chemicals <span class="arrow">→</span> <span>Chem Distributor</span><br>
+                <span>Farm</span> <span class="arrow">→</span> Grain <span class="arrow">→</span> <span>Bakery</span> <span class="arrow">→</span> Food <span class="arrow">→</span> <span>Market</span>
+              </div>
+              <p>Processors (Sawmill, Factory, etc.) need <b>both</b> an input delivery route AND an output pickup route, or they'll fill up and block everything upstream.</p>
+
+              <h3>Long-Distance Transport</h3>
+              <ul>
+                <li><b>🚛 Trucks</b> — Low cost, fast setup. Best for intra-city short hauls.</li>
+                <li><b>🚂 Trains</b> — 3× truck capacity, requires <b>Railway</b> tech + rail tracks. Ideal for high-volume inter-city routes.</li>
+                <li><b>✈ Planes</b> — Fly direct (no roads), fast. Requires <b>Aviation</b> tech + airports on both ends.</li>
+                <li><b>⛵ Ships</b> — Massive capacity (80 units), very slow. Requires <b>Maritime</b> tech + seaports on coast tiles.</li>
+              </ul>
+              <div class="tip-box">💡 Tip: Build trucks first to fund the Railway tech — then switch inter-city routes to trains for 3× profit.</div>
+
+              <h3>Tech Tree</h3>
+              <p>Open the <b>🔬 Tech</b> panel to spend money on upgrades. Recommended order:</p>
+              <ul>
+                <li><b>Cheaper Roads</b> — cuts road cost by 30%</li>
+                <li><b>Faster Trucks</b> — +30% truck speed</li>
+                <li><b>Larger Stations</b> — doubles station cargo capacity</li>
+                <li><b>Railway Engineering</b> — unlocks trains &amp; rail tracks</li>
+                <li><b>Aviation / Maritime</b> — unlocks planes and ships</li>
+              </ul>
+
+              <h3>Locked Neighborhoods</h3>
+              <p>Some city clusters start <b>🔒 locked</b>. Click on a locked neighborhood to see its unlock cost. Once unlocked, the whole cluster opens up — adding new consumers and raw producers worth connecting.</p>
+
+              <h3>Objectives &amp; Scoring</h3>
+              <p>Complete <b>Objectives</b> (shown in the 🎯 panel) for bonus cash. They range from completing your first delivery to hauling hundreds of units of specific cargo. Completing objectives early funds your expansion.</p>
+
+              <div class="tip-box">💡 Tip: Each city has one of every industry type. You don't need to haul inter-city to make money — but trains/ships between cities make far more per trip.</div>
+
+            </div>
+          </div><!-- /pane-how -->
+
+        </div><!-- /ld-panel -->
+
+        <div class="ld-footer">TransportSim &nbsp;·&nbsp; Vite + TypeScript + Canvas 2D</div>
+
+      </div><!-- /ld-inner -->
+    </div><!-- /landing -->
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

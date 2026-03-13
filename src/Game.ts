@@ -27,10 +27,10 @@ export class Game {
   private lastTime = 0;
   private accumulator = 0;
 
-  constructor(canvas: HTMLCanvasElement, uiContainer: HTMLElement, devMode = false) {
+  constructor(canvas: HTMLCanvasElement, uiContainer: HTMLElement, devMode = false, preloadedState?: GameState) {
     this.canvas = canvas;
     migrateLegacySave();
-    this.state = createInitialGameState({ devMode });
+    this.state = preloadedState ?? createInitialGameState({ devMode });
     this.uiState = createUIState();
 
     // Center camera on the generated map dimensions
