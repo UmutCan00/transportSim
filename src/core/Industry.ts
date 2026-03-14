@@ -19,6 +19,8 @@ import {
   MARKET_CAPACITY,
   CHEM_DIST_CAPACITY,
   CITY_UNLOCK_COST,
+  PASSENGER_TERMINAL_CAPACITY,
+  PASSENGER_PRODUCTION_INTERVAL,
 } from '../constants.ts';
 
 // ── Procedural industry names ────────────────────────────
@@ -39,7 +41,8 @@ const NAME_PREFIXES: Record<IndustryType, string[]> = {
   [IndustryType.Factory]:       ['Mechanix', 'Fabricator', 'Widgetco', 'Autocraft', 'Produce'],
   [IndustryType.Neighborhood]:  ['Portville', 'Eastgate', 'Westshore', 'Northend', 'Midtown', 'Riverside', 'Hillside', 'Docklands'],
   [IndustryType.ChemDistributor]: ['Nexchem', 'Axiom', 'Solvent', 'Polycore', 'Tritane'],
-  [IndustryType.Market]:        ['Grand', 'Tradewind', 'Commerce', 'Merchant', 'Bazaar'],
+  [IndustryType.Market]:           ['Grand', 'Tradewind', 'Commerce', 'Merchant', 'Bazaar'],
+  [IndustryType.PassengerTerminal]: ['Central', 'Union', 'Gateway', 'Metro', 'Grand Central'],
 };
 
 const NAME_SUFFIXES: Record<IndustryType, string> = {
@@ -58,7 +61,8 @@ const NAME_SUFFIXES: Record<IndustryType, string> = {
   [IndustryType.Factory]:       'Factory',
   [IndustryType.Neighborhood]:  'District',
   [IndustryType.ChemDistributor]: 'Chem Dist',
-  [IndustryType.Market]:        'Market',
+  [IndustryType.Market]:           'Market',
+  [IndustryType.PassengerTerminal]: 'Station',
 };
 
 export function generateIndustryName(type: IndustryType, id: number): string {
@@ -142,6 +146,19 @@ export function createLockedNeighborhood(id: number, p: Vec2, unlockCost = CITY_
 
 export const createMarket      = (id: number, p: Vec2) =>
   makeIndustry(id, IndustryType.Market,     p, null, CargoType.Food,  null, CargoType.Food,  MARKET_CAPACITY,     0);
+
+/** City passenger terminal: generates passengers and accepts them from other cities */
+export const createPassengerTerminal = (id: number, p: Vec2): Industry =>
+  makeIndustry(id, IndustryType.PassengerTerminal, p, CargoType.Passengers, CargoType.Passengers, null,
+    CargoType.Passengers, PASSENGER_TERMINAL_CAPACITY, PASSENGER_PRODUCTION_INTERVAL);
+
+/** Creates a locked passenger terminal */
+export function createLockedPassengerTerminal(id: number, p: Vec2, unlockCost = CITY_UNLOCK_COST): Industry {
+  const t = createPassengerTerminal(id, p);
+  t.locked = true;
+  t.unlockCost = unlockCost;
+  return t;
+}
 
 // ── New industry chains ──────────────────────────────────
 // Chain: Iron Mine → Smelter → (Steel goes to Factory)  — alternative steel source
@@ -246,7 +263,8 @@ export function industryLabel(type: IndustryType): string {
     [IndustryType.Smelter]:       '🔥 Smelter',
     [IndustryType.ChemicalPlant]: '🧪 Chem Plant',
     [IndustryType.ChemDistributor]: '🧬 Chem Distributor',
-    [IndustryType.Market]:        '🛒 Market',
+    [IndustryType.Market]:           '🛒 Market',
+    [IndustryType.PassengerTerminal]: '🚉 Passenger Terminal',
   }[type] ?? type;
 }
 

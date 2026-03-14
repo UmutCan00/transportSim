@@ -39,24 +39,54 @@ export function drawMap(ctx: CanvasRenderingContext2D, map: TileMap, camera: Cam
           // Pale ballast base
           ctx.fillStyle = COLORS.rail;
           ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-          // Draw two rail lines
+          // Determine orientation from neighbours
+          const hasLeft  = x > 0 && map.tiles[y * map.width + (x - 1)] === TileType.Rail;
+          const hasRight = x < map.width - 1 && map.tiles[y * map.width + (x + 1)] === TileType.Rail;
+          const hasUp    = y > 0 && map.tiles[(y - 1) * map.width + x] === TileType.Rail;
+          const hasDown  = y < map.height - 1 && map.tiles[(y + 1) * map.width + x] === TileType.Rail;
+          const drawH = hasLeft || hasRight;
+          const drawV = hasUp || hasDown || !drawH; // vertical by default when isolated
+
+          const m = TILE_SIZE * 0.22;
           ctx.strokeStyle = '#d0c8b8';
           ctx.lineWidth = 2;
-          const margin = TILE_SIZE * 0.22;
-          ctx.beginPath();
-          ctx.moveTo(px + margin, py + 1);
-          ctx.lineTo(px + margin, py + TILE_SIZE - 1);
-          ctx.moveTo(px + TILE_SIZE - margin, py + 1);
-          ctx.lineTo(px + TILE_SIZE - margin, py + TILE_SIZE - 1);
-          ctx.stroke();
-          // Cross-ties every half tile
-          ctx.strokeStyle = COLORS.railTie;
-          ctx.lineWidth = 3;
-          for (let t = 0.2; t < 1; t += 0.4) {
+          if (drawV) {
             ctx.beginPath();
-            ctx.moveTo(px + margin - 2, py + TILE_SIZE * t);
-            ctx.lineTo(px + TILE_SIZE - margin + 2, py + TILE_SIZE * t);
+            ctx.moveTo(px + m, py + 1);
+            ctx.lineTo(px + m, py + TILE_SIZE - 1);
+            ctx.moveTo(px + TILE_SIZE - m, py + 1);
+            ctx.lineTo(px + TILE_SIZE - m, py + TILE_SIZE - 1);
             ctx.stroke();
+            if (!drawH) {
+              ctx.strokeStyle = COLORS.railTie;
+              ctx.lineWidth = 3;
+              for (let t = 0.2; t < 1; t += 0.4) {
+                ctx.beginPath();
+                ctx.moveTo(px + m - 2, py + TILE_SIZE * t);
+                ctx.lineTo(px + TILE_SIZE - m + 2, py + TILE_SIZE * t);
+                ctx.stroke();
+              }
+            }
+          }
+          if (drawH) {
+            ctx.strokeStyle = '#d0c8b8';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(px + 1, py + m);
+            ctx.lineTo(px + TILE_SIZE - 1, py + m);
+            ctx.moveTo(px + 1, py + TILE_SIZE - m);
+            ctx.lineTo(px + TILE_SIZE - 1, py + TILE_SIZE - m);
+            ctx.stroke();
+            if (!drawV) {
+              ctx.strokeStyle = COLORS.railTie;
+              ctx.lineWidth = 3;
+              for (let t = 0.2; t < 1; t += 0.4) {
+                ctx.beginPath();
+                ctx.moveTo(px + TILE_SIZE * t, py + m - 2);
+                ctx.lineTo(px + TILE_SIZE * t, py + TILE_SIZE - m + 2);
+                ctx.stroke();
+              }
+            }
           }
           ctx.strokeStyle = COLORS.grid;
           ctx.lineWidth = 0.5;
@@ -76,3 +106,5 @@ export function drawMap(ctx: CanvasRenderingContext2D, map: TileMap, camera: Cam
     }
   }
 }
+
+

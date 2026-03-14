@@ -1,5 +1,5 @@
 import { Game } from './Game.ts';
-import type { GameState, MapSize } from './core/types.ts';
+import type { GameState, MapSize, Difficulty, Theme } from './core/types.ts';
 import { createInitialGameState } from './core/GameState.ts';
 import { getSlotMeta, loadFromSlot, clearSlot, migrateLegacySave } from './core/Save.ts';
 import type { SaveSlot } from './core/Save.ts';
@@ -16,6 +16,11 @@ if (!canvas || !uiContainer || !landing) {
 
 const devMode = new URLSearchParams(location.search).get('dev') === '1';
 let selectedSize: MapSize = 'normal';
+let selectedDifficulty: Difficulty = 'normal';
+let selectedTheme: Theme = 'dark';
+
+// Apply initial theme
+document.body.classList.add('theme-dark');
 
 // ── Tab switching ─────────────────────────────────────────────
 document.querySelectorAll<HTMLButtonElement>('.ld-tab').forEach(btn => {
@@ -38,11 +43,31 @@ document.querySelectorAll<HTMLButtonElement>('.size-btn').forEach(btn => {
   });
 });
 
+// ── Difficulty buttons ────────────────────────────────────────
+document.querySelectorAll<HTMLButtonElement>('.diff-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedDifficulty = btn.dataset['diff'] as Difficulty;
+  });
+});
+
+// ── Theme buttons ─────────────────────────────────────────────
+document.querySelectorAll<HTMLButtonElement>('.theme-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedTheme = btn.dataset['theme'] as Theme;
+    document.body.className = document.body.className.replace(/\btheme-\w+\b/, '').trim()
+      + ` theme-${selectedTheme}`;
+  });
+});
+
 // ── Start new game ────────────────────────────────────────────
 document.getElementById('ld-start-btn')?.addEventListener('click', () => {
   const seedInput = (document.getElementById('ld-seed-input') as HTMLInputElement).value.trim();
   const seed = seedInput ? parseInt(seedInput, 10) : undefined;
-  launchGame(createInitialGameState({ devMode, mapSize: selectedSize, seed }));
+  launchGame(createInitialGameState({ devMode, mapSize: selectedSize, seed, difficulty: selectedDifficulty, theme: selectedTheme }));
 });
 
 // ── Render save slots ─────────────────────────────────────────

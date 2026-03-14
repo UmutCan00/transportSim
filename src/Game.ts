@@ -1,6 +1,5 @@
 import type { GameState, UIState } from './core/types.ts';
-import type { SimSpeed } from './core/types.ts';
-import { ToolType } from './core/types.ts';
+import { SimSpeed, ToolType } from './core/types.ts';
 import { createInitialGameState } from './core/GameState.ts';
 import type { NewGameOptions } from './core/GameState.ts';
 import { simulationTick, getTickDuration } from './core/GameLoop.ts';
@@ -33,10 +32,9 @@ export class Game {
     this.state = preloadedState ?? createInitialGameState({ devMode });
     this.uiState = createUIState();
 
-    // Center camera on the generated map dimensions
-    const worldCenterX = (this.state.map.width  * TILE_SIZE) / 2;
-    const worldCenterY = (this.state.map.height * TILE_SIZE) / 2;
-    this.camera = new Camera(canvas.width, canvas.height, worldCenterX, worldCenterY);
+    this.camera = new Camera(canvas.width, canvas.height, 0, 0);
+    // Center camera on first active city instead of raw map centre
+    this.centerOnFirstCity();
 
     this.renderer = new Renderer(canvas);
 
@@ -58,10 +56,7 @@ export class Game {
       this.accumulator = 0;
       this.uiState = createUIState();
       this.inputHandler.setUIState(this.uiState);
-      const cx = (this.state.map.width  * TILE_SIZE) / 2;
-      const cy = (this.state.map.height * TILE_SIZE) / 2;
-      this.camera.x = cx;
-      this.camera.y = cy;
+      this.centerOnFirstCity();
     });
 
     this.uiManager.setLoadSaveHandler((loaded: GameState) => {
@@ -69,10 +64,7 @@ export class Game {
       this.accumulator = 0;
       this.uiState = createUIState();
       this.inputHandler.setUIState(this.uiState);
-      const cx = (this.state.map.width  * TILE_SIZE) / 2;
-      const cy = (this.state.map.height * TILE_SIZE) / 2;
-      this.camera.x = cx;
-      this.camera.y = cy;
+      this.centerOnFirstCity();
     });
 
     this.uiManager.setUnlockTechHandler((id: string) => {
@@ -87,6 +79,8 @@ export class Game {
     window.addEventListener('resize', () => this.handleResize());
   }
 
+  private _preSpeedBeforePause: SimSpeed | null = null;
+
   private handleResize(): void {
     this.canvas.width = window.innerWidth;
     this.canvas.height = window.innerHeight;
@@ -95,6 +89,26 @@ export class Game {
 
   start(): void {
     this.lastTime = performance.now();
+
+    // Space bar toggles pause
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !(e.target as HTMLElement)?.matches?.('input,textarea,button')) {
+        e.preventDefault();
+        if (this.state.time.speed === SimSpeed.Paused) {
+          this.state.time.speed = this._preSpeedBeforePause ?? SimSpeed.Normal;
+          this._preSpeedBeforePause = null;
+        } else {
+          this._preSpeedBeforePause = this.state.time.speed;
+          this.state.time.speed = SimSpeed.Paused;
+        }
+      }
+      // Home key recenters camera on first active city
+      if (e.code === 'Home' && !(e.target as HTMLElement)?.matches?.('input,textarea,button')) {
+        e.preventDefault();
+        this.centerOnFirstCity();
+      }
+    });
+
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -116,6 +130,11 @@ export class Game {
         while (this.accumulator >= tickDuration) {
           const completed = simulationTick(this.state);
           for (const id of completed) {
+            if (id.startsWith('__maintenance:')) {
+              const bill = parseInt(id.slice(14), 10);
+              this.addToast(`🔧 Maintenance: -$${bill.toLocaleString()}`);
+              continue;
+            }
             const obj = this.state.objectives.find((o) => o.id === id);
             if (obj) this.addToast(`🎯 Objective completed: ${obj.title} (+$${obj.reward.toLocaleString()})`);
           }
@@ -130,7 +149,7 @@ export class Game {
 
       // Render
       this.renderer.draw(this.state, this.uiState, this.camera);
-      this.uiManager.update(this.state, this.uiState);
+      this.uiManager.update(this.state, this.uiState, this.camera);
     } catch (err) {
       console.error('[Game] frame error:', err);
     }
@@ -141,5 +160,20 @@ export class Game {
     this.uiState.toasts.push({ id, msg, ttl: 4000 });
     // Keep max 4 toasts
     if (this.uiState.toasts.length > 4) this.uiState.toasts.shift();
+  }
+
+  /** Center camera on the first active city (cityId 0). Falls back to map center. */
+  private centerOnFirstCity(): void {
+    const city0 = this.state.industries.filter((i) => i.cityId === 0);
+    if (city0.length > 0) {
+      let sx = 0, sy = 0;
+      for (const ind of city0) { sx += ind.position.x; sy += ind.position.y; }
+      this.camera.x = (sx / city0.length + 1) * TILE_SIZE;
+      this.camera.y = (sy / city0.length + 1) * TILE_SIZE;
+    } else {
+      this.camera.x = (this.state.map.width  * TILE_SIZE) / 2;
+      this.camera.y = (this.state.map.height * TILE_SIZE) / 2;
+    }
+    this.camera.zoom = 1.5;
   }
 }

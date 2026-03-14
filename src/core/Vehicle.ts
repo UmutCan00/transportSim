@@ -1,78 +1,77 @@
 import type { Vehicle, Vec2 } from './types.ts';
-import { VehicleState, VehicleType } from './types.ts';
-import { TRUCK_SPEED, TRUCK_CAPACITY, LOCOMOTIVE_SPEED, LOCOMOTIVE_CAPACITY,
-  PLANE_SPEED, PLANE_CAPACITY, SHIP_SPEED, SHIP_CAPACITY } from '../constants.ts';
+import { VehicleState, VehicleType, VehicleModel } from './types.ts';
+import {
+  TRUCK_SPEED, TRUCK_CAPACITY,
+  CARGO_TRUCK_SPEED, CARGO_TRUCK_CAPACITY,
+  HEAVY_HAULER_SPEED, HEAVY_HAULER_CAPACITY,
+  LOCOMOTIVE_SPEED, LOCOMOTIVE_CAPACITY,
+  EXPRESS_TRAIN_SPEED, EXPRESS_TRAIN_CAPACITY,
+  PLANE_SPEED, PLANE_CAPACITY,
+  CARGO_PLANE_SPEED, CARGO_PLANE_CAPACITY,
+  JUMBO_SPEED, JUMBO_CAPACITY,
+  SHIP_SPEED, SHIP_CAPACITY,
+  CARGO_SHIP_SPEED, CARGO_SHIP_CAPACITY,
+  SUPERTANKER_SPEED, SUPERTANKER_CAPACITY,
+} from '../constants.ts';
 
+function makeVehicle(id: number, position: Vec2, vehicleType: VehicleType, model: VehicleModel, speed: number, capacity: number): Vehicle {
+  return {
+    id,
+    vehicleType,
+    model,
+    position: { ...position },
+    path: [],
+    pathIndex: 0,
+    moveProgress: 0,
+    speed,
+    cargoCapacity: capacity,
+    cargo: null,
+    cargoAmount: 0,
+    routeId: null,
+    currentOrderIndex: 0,
+    state: VehicleState.Idle,
+  };
+}
+
+// ── Trucks ────────────────────────────────────────────────
 export function createVehicle(id: number, position: Vec2): Vehicle {
-  return {
-    id,
-    vehicleType: VehicleType.Truck,
-    position: { ...position },
-    path: [],
-    pathIndex: 0,
-    moveProgress: 0,
-    speed: TRUCK_SPEED,
-    cargoCapacity: TRUCK_CAPACITY,
-    cargo: null,
-    cargoAmount: 0,
-    routeId: null,
-    currentOrderIndex: 0,
-    state: VehicleState.Idle,
-  };
+  return makeVehicle(id, position, VehicleType.Truck, VehicleModel.BasicTruck, TRUCK_SPEED, TRUCK_CAPACITY);
+}
+export function createCargoTruck(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Truck, VehicleModel.CargoTruck, CARGO_TRUCK_SPEED, CARGO_TRUCK_CAPACITY);
+}
+export function createHeavyHauler(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Truck, VehicleModel.HeavyHauler, HEAVY_HAULER_SPEED, HEAVY_HAULER_CAPACITY);
 }
 
+// ── Locomotives ───────────────────────────────────────────
 export function createLocomotive(id: number, position: Vec2): Vehicle {
-  return {
-    id,
-    vehicleType: VehicleType.Locomotive,
-    position: { ...position },
-    path: [],
-    pathIndex: 0,
-    moveProgress: 0,
-    speed: LOCOMOTIVE_SPEED,
-    cargoCapacity: LOCOMOTIVE_CAPACITY,
-    cargo: null,
-    cargoAmount: 0,
-    routeId: null,
-    currentOrderIndex: 0,
-    state: VehicleState.Idle,
-  };
+  return makeVehicle(id, position, VehicleType.Locomotive, VehicleModel.FreightTrain, LOCOMOTIVE_SPEED, LOCOMOTIVE_CAPACITY);
+}
+export function createExpressTrain(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Locomotive, VehicleModel.ExpressTrain, EXPRESS_TRAIN_SPEED, EXPRESS_TRAIN_CAPACITY);
 }
 
+// ── Planes ────────────────────────────────────────────────
 export function createPlane(id: number, position: Vec2): Vehicle {
-  return {
-    id,
-    vehicleType: VehicleType.Plane,
-    position: { ...position },
-    path: [],
-    pathIndex: 0,
-    moveProgress: 0,
-    speed: PLANE_SPEED,
-    cargoCapacity: PLANE_CAPACITY,
-    cargo: null,
-    cargoAmount: 0,
-    routeId: null,
-    currentOrderIndex: 0,
-    state: VehicleState.Idle,
-  };
+  return makeVehicle(id, position, VehicleType.Plane, VehicleModel.LightAircraft, PLANE_SPEED, PLANE_CAPACITY);
+}
+export function createCargoPLane(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Plane, VehicleModel.CargoPlane, CARGO_PLANE_SPEED, CARGO_PLANE_CAPACITY);
+}
+export function createJumboJet(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Plane, VehicleModel.JumboJet, JUMBO_SPEED, JUMBO_CAPACITY);
 }
 
+// ── Ships ─────────────────────────────────────────────────
 export function createShip(id: number, position: Vec2): Vehicle {
-  return {
-    id,
-    vehicleType: VehicleType.Ship,
-    position: { ...position },
-    path: [],
-    pathIndex: 0,
-    moveProgress: 0,
-    speed: SHIP_SPEED,
-    cargoCapacity: SHIP_CAPACITY,
-    cargo: null,
-    cargoAmount: 0,
-    routeId: null,
-    currentOrderIndex: 0,
-    state: VehicleState.Idle,
-  };
+  return makeVehicle(id, position, VehicleType.Ship, VehicleModel.RiverBarge, SHIP_SPEED, SHIP_CAPACITY);
+}
+export function createCargoShip(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Ship, VehicleModel.CargoShip, CARGO_SHIP_SPEED, CARGO_SHIP_CAPACITY);
+}
+export function createSupertanker(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Ship, VehicleModel.Supertanker, SUPERTANKER_SPEED, SUPERTANKER_CAPACITY);
 }
 
 /** Advance vehicle movement along its path by one tick */

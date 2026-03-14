@@ -23,18 +23,24 @@ export interface TileMap {
   tiles: TileType[];
 }
 
+// ── Difficulty / Theme ──────────────────────────────────
+
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'brutal';
+export type Theme = 'classic' | 'dark' | 'neon' | 'anime' | 'retro';
+
 // ── Cargo ───────────────────────────────────────────────
 
 export enum CargoType {
-  Coal      = 'coal',
-  Wood      = 'wood',
-  Grain     = 'grain',
-  Steel     = 'steel',
-  Oil       = 'oil',
-  Goods     = 'goods',
-  Iron      = 'iron',
-  Chemicals = 'chemicals',
-  Food      = 'food',
+  Coal       = 'coal',
+  Wood       = 'wood',
+  Grain      = 'grain',
+  Steel      = 'steel',
+  Oil        = 'oil',
+  Goods      = 'goods',
+  Iron       = 'iron',
+  Chemicals  = 'chemicals',
+  Food       = 'food',
+  Passengers = 'passengers',
 }
 
 export interface CargoStock {
@@ -61,8 +67,9 @@ export enum IndustryType {
   IronMine        = 'iron_mine',      // produces Iron
   Smelter         = 'smelter',        // Iron → Steel (alt chain)
   ChemicalPlant   = 'chem_plant',     // Oil → Chemicals
-  ChemDistributor = 'chem_dist',      // consumes Chemicals (final)
-  Market          = 'market',         // consumes Food (Bakery output)
+  ChemDistributor   = 'chem_dist',        // consumes Chemicals (final)
+  Market            = 'market',           // consumes Food (Bakery output)
+  PassengerTerminal = 'passenger_terminal', // produces + consumes Passengers (inter-city)
 }
 
 export interface Industry {
@@ -96,28 +103,41 @@ export interface Industry {
 export enum BuildingType {
   Depot    = 'depot',
   Station  = 'station',
-  Airport  = 'airport',  // air hub — planes fly directly between airports
-  Seaport  = 'seaport',  // sea hub — ships navigate water tiles
+  Airport  = 'airport',
+  Seaport  = 'seaport',
+  TrainYard = 'train_yard',
+}
+
+export enum DepotType {
+  Road = 'road',  // trucks
+  Rail = 'rail',  // locomotives (TrainYard)
 }
 
 export interface Station {
   id: number;
   type: BuildingType.Station;
   position: Vec2;
+  size: Vec2;
   cargo: CargoStock;
   linkedIndustryId: number | null;
 }
 
 export interface Depot {
   id: number;
-  type: BuildingType.Depot;
+  type: BuildingType.Depot | BuildingType.TrainYard;
+  depotType: DepotType;
   position: Vec2;
+  size: Vec2;
+  maxVehicles: number;
 }
 
 export interface Airport {
   id: number;
   type: BuildingType.Airport;
+  tier: 'small' | 'large';
   position: Vec2;
+  size: Vec2;
+  maxVehicles: number;
   cargo: CargoStock;
   linkedIndustryId: number | null;
   name: string;
@@ -126,7 +146,10 @@ export interface Airport {
 export interface Seaport {
   id: number;
   type: BuildingType.Seaport;
+  tier: 'small' | 'large';
   position: Vec2;
+  size: Vec2;
+  maxVehicles: number;
   cargo: CargoStock;
   linkedIndustryId: number | null;
   name: string;
@@ -138,9 +161,28 @@ export type Building = Station | Depot | Airport | Seaport;
 
 export enum VehicleType {
   Truck      = 'truck',
-  Locomotive = 'locomotive',  // fast, high-capacity, unlocked by Railway tech
-  Plane      = 'plane',       // flies directly between airports, ignores road network
-  Ship       = 'ship',        // sails via water tiles — slow but very high capacity
+  Locomotive = 'locomotive',
+  Plane      = 'plane',
+  Ship       = 'ship',
+}
+
+/** Sub-model within a VehicleType — determines speed/capacity/cost */
+export enum VehicleModel {
+  // Trucks
+  BasicTruck    = 'basic_truck',
+  CargoTruck    = 'cargo_truck',
+  HeavyHauler   = 'heavy_hauler',
+  // Locomotives
+  FreightTrain  = 'freight_train',
+  ExpressTrain  = 'express_train',
+  // Planes
+  LightAircraft = 'light_aircraft',
+  CargoPlane    = 'cargo_plane',
+  JumboJet      = 'jumbo_jet',
+  // Ships
+  RiverBarge    = 'river_barge',
+  CargoShip     = 'cargo_ship',
+  Supertanker   = 'supertanker',
 }
 
 // ── Vehicles ────────────────────────────────────────────
@@ -155,6 +197,7 @@ export enum VehicleState {
 export interface Vehicle {
   id: number;
   vehicleType: VehicleType;
+  model: VehicleModel;
   position: Vec2;
   path: Vec2[];
   pathIndex: number;
@@ -184,12 +227,24 @@ export interface Route {
 
 // ── Economy ─────────────────────────────────────────────
 
+export interface Transaction {
+  tick: number;
+  delta: number;  // positive = income, negative = expense
+  label: string;
+}
+
 export interface Economy {
   money: number;
   totalEarned: number;
   deliveriesCompleted: number;
   /** Per-cargo delivered counts */
   cargoDelivered: Partial<Record<CargoType, number>>;
+  /** Cumulative maintenance paid (informational) */
+  totalMaintenancePaid: number;
+  /** Maintenance cost paid last billing cycle (for HUD display) */
+  lastMaintenanceBill: number;
+  /** Last 50 financial transactions (capped) for money panel */
+  transactions: Transaction[];
 }
 
 // ── Time ────────────────────────────────────────────────
@@ -214,15 +269,55 @@ export enum TechId {
   CheaperRoads      = 'cheaper_roads',
   DoubleCapacity    = 'double_capacity',
   ExpressTrucks     = 'express_trucks',
+  HeavyHaulers      = 'heavy_haulers',
   BulkTerminals     = 'bulk_terminals',
   AutoLoader        = 'auto_loader',
   EfficientRoutes   = 'efficient_routes',
   MassTransit       = 'mass_transit',
   Railway           = 'railway',
-  Bridging          = 'bridging',   // unlocks BuildBridge tool
-  Tunneling         = 'tunneling',  // unlocks BuildTunnel tool
-  Aviation          = 'aviation',   // unlocks airports + planes
-  Maritime          = 'maritime',   // unlocks seaports + ships
+  Bridging          = 'bridging',
+  Tunneling         = 'tunneling',
+  Aviation          = 'aviation',
+  Maritime          = 'maritime',
+  // Road exclusive branch
+  HighwayNet        = 'highway_net',
+  BulkNetwork       = 'bulk_network',
+  // Rail exclusive branch
+  FreightYard       = 'freight_yard',
+  ExpressLine       = 'express_line',
+  // Advanced tiers
+  AdvancedAviation  = 'advanced_aviation',
+  DeepSea           = 'deep_sea',
+  // ── New additions for 40-item tree ──────────────────
+  // New roots (row 0)
+  FuelEfficiency    = 'fuel_efficiency',
+  ContainerSystem   = 'container_system',
+  // Finance branch (exclusive)
+  FreightInsurance  = 'freight_insurance',
+  DirectDelivery    = 'direct_delivery',
+  // Maintenance / operations
+  MaintenanceDept   = 'maintenance_dept',
+  NightFreight      = 'night_freight',
+  // Cargo-specialisation (exclusive)
+  ColdChain         = 'cold_chain',
+  BulkDiscount      = 'bulk_discount',
+  // Power source (exclusive)
+  Electrification   = 'electrification',
+  FossilSurge       = 'fossil_surge',
+  // Economy bonuses
+  GreenRoutes       = 'green_routes',
+  // Passenger vs Cargo priority (exclusive)
+  PassengerPlus     = 'passenger_plus',
+  CargoNetwork      = 'cargo_network',
+  // Endgame rail (exclusive)
+  MaglevRail        = 'maglev_rail',
+  HyperCargo        = 'hyper_cargo',
+  // Endgame aviation (exclusive)
+  HeavyLift         = 'heavy_lift',
+  RapidCargo        = 'rapid_cargo',
+  // Endgame general
+  GlobalLogistics   = 'global_logistics',
+  SupplyChainAI     = 'supply_chain_ai',
 }
 
 export interface TechNode {
@@ -233,8 +328,13 @@ export interface TechNode {
   tier: 1 | 2 | 3;
   requires: TechId[];
   unlocked: boolean;
-  /** icon emoji */
   icon: string;
+  /** Techs sharing the same group are mutually exclusive — only one can be unlocked */
+  exclusiveGroup?: string;
+  /** Visual tree layout column (0-based) */
+  treeCol: number;
+  /** Visual tree layout row (0-based, top = 0) */
+  treeRow: number;
 }
 
 // ── Objectives ──────────────────────────────────────────
@@ -254,21 +354,24 @@ export interface Objective {
 // ── Tool State ──────────────────────────────────────────
 
 export enum ToolType {
-  Select       = 'select',
-  BuildRoad    = 'build_road',
-  PlaceStation = 'place_station',
-  PlaceDepot   = 'place_depot',
-  Demolish     = 'demolish',
-  LayRail      = 'lay_rail',
-  BuildBridge  = 'build_bridge',  // cross water — requires Bridging tech
-  BuildTunnel  = 'build_tunnel',  // cross mountain — requires Tunneling tech
-  PlaceAirport = 'place_airport', // place an airport — requires Aviation tech
-  PlaceSeaport = 'place_seaport', // place a seaport — requires Maritime tech
+  Select         = 'select',
+  BuildRoad      = 'build_road',
+  PlaceStation   = 'place_station',
+  PlaceDepot     = 'place_depot',
+  PlaceTrainYard = 'place_train_yard',
+  Demolish       = 'demolish',
+  LayRail        = 'lay_rail',
+  BuildBridge    = 'build_bridge',
+  BuildTunnel    = 'build_tunnel',
+  PlaceAirport       = 'place_airport',
+  PlaceAirportLarge  = 'place_airport_large',
+  PlaceSeaport       = 'place_seaport',
+  PlaceSeaportLarge  = 'place_seaport_large',
 }
 
 // ── UI Panel ────────────────────────────────────────────
 
-export type ActivePanel = 'none' | 'tech' | 'objectives' | 'depot' | 'routes' | 'newgame' | 'help' | 'save';
+export type ActivePanel = 'none' | 'tech' | 'objectives' | 'depot' | 'routes' | 'newgame' | 'help' | 'save' | 'money';
 
 export type MapSize = 'small' | 'normal' | 'large' | 'huge';
 
@@ -281,6 +384,8 @@ export interface UIState {
   selectedEntityId: number | null;
   selectedEntityType: 'industry' | 'building' | 'vehicle' | null;
   activePanel: ActivePanel;
+  /** Start tile for line-drag road/rail placement */
+  lineDragStart: Vec2 | null;
   /** Toast notifications queue */
   toasts: { id: number; msg: string; ttl: number }[];
 }
@@ -300,10 +405,13 @@ export interface GameState {
   nextId: number;
   tech: TechNode[];
   objectives: Objective[];
-  /** Total road tiles ever built (for objectives) */
   roadsBuilt: number;
-  /** Total rail tiles ever laid (for objectives) */
   railsBuilt: number;
-  /** True when started with ?dev=1 URL param */
+  /** Running count of road tiles (kept in sync to avoid O(n) tile scans) */
+  roadTileCount: number;
+  /** Running count of rail tiles */
+  railTileCount: number;
   devMode: boolean;
+  difficulty: Difficulty;
+  theme: Theme;
 }

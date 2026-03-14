@@ -19,6 +19,7 @@ const INDUSTRY_COLOR: Record<IndustryType, string> = {
   [IndustryType.ChemicalPlant]:   COLORS.chemPlant,
   [IndustryType.ChemDistributor]: COLORS.chemDist,
   [IndustryType.Market]:          COLORS.market,
+  [IndustryType.PassengerTerminal]: '#4466cc',
 };
 
 const INDUSTRY_ICON: Record<IndustryType, string> = {
@@ -38,6 +39,7 @@ const INDUSTRY_ICON: Record<IndustryType, string> = {
   [IndustryType.ChemicalPlant]:   '🧪',
   [IndustryType.ChemDistributor]: '🧬',
   [IndustryType.Market]:          '🛒',
+  [IndustryType.PassengerTerminal]: '🚉',
 };
 
 export function drawIndustries(ctx: CanvasRenderingContext2D, industries: Industry[]): void {
@@ -93,6 +95,10 @@ export function drawBuildings(ctx: CanvasRenderingContext2D, buildings: Building
   for (const b of buildings) {
     const px = b.position.x * TILE_SIZE;
     const py = b.position.y * TILE_SIZE;
+    // Multi-tile footprint dimensions
+    const sz = (b as { size?: { x: number; y: number } }).size ?? { x: 1, y: 1 };
+    const bw = sz.x * TILE_SIZE;
+    const bh = sz.y * TILE_SIZE;
 
     if (b.type === BuildingType.Station) {
       ctx.fillStyle = COLORS.station;
@@ -100,11 +106,11 @@ export function drawBuildings(ctx: CanvasRenderingContext2D, buildings: Building
 
       // Cargo bar
       if (b.cargo.capacity > 0) {
-        const bw = Math.floor((b.cargo.amount / b.cargo.capacity) * (TILE_SIZE - 8));
+        const barw = Math.floor((b.cargo.amount / b.cargo.capacity) * (TILE_SIZE - 8));
         ctx.fillStyle = 'rgba(0,0,0,0.3)';
         ctx.fillRect(px + 4, py + TILE_SIZE - 7, TILE_SIZE - 8, 3);
         ctx.fillStyle = '#4cf';
-        ctx.fillRect(px + 4, py + TILE_SIZE - 7, bw, 3);
+        ctx.fillRect(px + 4, py + TILE_SIZE - 7, barw, 3);
       }
 
       ctx.font = '10px serif';
@@ -112,37 +118,72 @@ export function drawBuildings(ctx: CanvasRenderingContext2D, buildings: Building
       ctx.textBaseline = 'middle';
       ctx.fillText('🏪', px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 2);
       ctx.textBaseline = 'alphabetic';
+
     } else if (b.type === BuildingType.Airport) {
-      // Airport: large indigo rectangle (2× visual footprint)
-      ctx.fillStyle = COLORS.airport;
-      ctx.fillRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
-      ctx.strokeStyle = 'rgba(100,160,255,0.8)';
+      ctx.fillStyle = (b as { tier?: string }).tier === 'large' ? '#1a1060' : COLORS.airport;
+      ctx.fillRect(px + 1, py + 1, bw - 2, bh - 2);
+      // Runway stripe
+      ctx.fillStyle = 'rgba(200,200,255,0.25)';
+      ctx.fillRect(px + bw * 0.2, py + bh * 0.4, bw * 0.6, bh * 0.2);
+      ctx.strokeStyle = 'rgba(100,160,255,0.9)';
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
-      ctx.font = '11px serif';
+      ctx.strokeRect(px + 1, py + 1, bw - 2, bh - 2);
+      ctx.font = `${Math.min(bw, bh) * 0.45}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('✈', px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 1);
+      ctx.fillText((b as { tier?: string }).tier === 'large' ? '🛫' : '✈', px + bw / 2, py + bh / 2 - 1);
       ctx.textBaseline = 'alphabetic';
+
     } else if (b.type === BuildingType.Seaport) {
-      // Seaport: teal rectangle with anchor
-      ctx.fillStyle = COLORS.seaport;
-      ctx.fillRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
-      ctx.strokeStyle = 'rgba(0,200,200,0.8)';
+      ctx.fillStyle = (b as { tier?: string }).tier === 'large' ? '#003333' : COLORS.seaport;
+      ctx.fillRect(px + 1, py + 1, bw - 2, bh - 2);
+      // Dock lines
+      ctx.strokeStyle = 'rgba(0,200,200,0.3)';
+      ctx.lineWidth = 1;
+      for (let dx = 0.2; dx < 0.9; dx += 0.2) {
+        ctx.beginPath();
+        ctx.moveTo(px + bw * dx, py + bh * 0.6);
+        ctx.lineTo(px + bw * dx, py + bh - 2);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(0,200,200,0.9)';
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
-      ctx.font = '11px serif';
+      ctx.strokeRect(px + 1, py + 1, bw - 2, bh - 2);
+      ctx.font = `${Math.min(bw, bh) * 0.45}px serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('⚓', px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 1);
+      ctx.fillText((b as { tier?: string }).tier === 'large' ? '🛳️' : '⚓', px + bw / 2, py + bh / 2 - 1);
       ctx.textBaseline = 'alphabetic';
+
+    } else if (b.type === BuildingType.TrainYard) {
+      ctx.fillStyle = '#1a1200';
+      ctx.fillRect(px + 1, py + 1, bw - 2, bh - 2);
+      // Rail track lines
+      ctx.strokeStyle = 'rgba(160,130,60,0.5)';
+      ctx.lineWidth = 1;
+      for (let dy = 0.3; dy < 1.0; dy += 0.3) {
+        ctx.beginPath();
+        ctx.moveTo(px + 2, py + bh * dy);
+        ctx.lineTo(px + bw - 2, py + bh * dy);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(220,180,80,0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(px + 1, py + 1, bw - 2, bh - 2);
+      ctx.font = `${Math.min(bw, bh) * 0.45}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🏭', px + bw / 2, py + bh / 2 - 1);
+      ctx.textBaseline = 'alphabetic';
+
     } else {
+      // Road Depot (2×1)
       ctx.fillStyle = COLORS.depot;
-      ctx.fillRect(px + 2, py + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+      ctx.fillRect(px + 2, py + 2, bw - 4, bh - 4);
       ctx.font = '10px serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('🏗', px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 2);
+      ctx.fillText('🏗', px + bw / 2, py + bh / 2 - 2);
       ctx.textBaseline = 'alphabetic';
     }
   }

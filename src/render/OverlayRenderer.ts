@@ -3,6 +3,17 @@ import { ToolType, TileType } from '../core/types.ts';
 import { TILE_SIZE, COLORS, STATION_LINK_RANGE } from '../constants.ts';
 import { getTile, isInBounds } from '../core/World.ts';
 import { getVehicleRenderPosition } from '../core/Vehicle.ts';
+import { axisLine } from '../input/InputHandler.ts';
+
+/** Footprint sizes (w, h) for multi-tile buildings */
+const TOOL_FOOTPRINT: Partial<Record<ToolType, [number, number]>> = {
+  [ToolType.PlaceDepot]:         [2, 1],
+  [ToolType.PlaceTrainYard]:     [2, 2],
+  [ToolType.PlaceAirport]:       [2, 2],
+  [ToolType.PlaceAirportLarge]:  [3, 3],
+  [ToolType.PlaceSeaport]:       [2, 2],
+  [ToolType.PlaceSeaportLarge]:  [3, 3],
+};
 
 export function drawHover(ctx: CanvasRenderingContext2D, state: GameState, uiState: UIState): void {
   const tile = uiState.hoveredTile;
@@ -11,13 +22,31 @@ export function drawHover(ctx: CanvasRenderingContext2D, state: GameState, uiSta
   const tool = uiState.activeTool;
   let color: string = COLORS.hover;
 
-  if (tool === ToolType.BuildRoad || tool === ToolType.PlaceStation || tool === ToolType.PlaceDepot) {
-    const canBuild = isInBounds(state.map, tile.x, tile.y) &&
-      getTile(state.map, tile.x, tile.y) !== TileType.Water &&
-      !state.industries.some((ind) =>
-        tile.x >= ind.position.x && tile.x < ind.position.x + ind.size.x &&
-        tile.y >= ind.position.y && tile.y < ind.position.y + ind.size.y
-      );
+  const [fw, fh] = TOOL_FOOTPRINT[tool] ?? [1, 1];
+
+  if (tool === ToolType.BuildRoad || tool === ToolType.PlaceStation || tool === ToolType.PlaceDepot ||
+      tool === ToolType.PlaceTrainYard || tool === ToolType.PlaceAirport ||
+      tool === ToolType.PlaceAirportLarge || tool === ToolType.PlaceSeaport ||
+      tool === ToolType.PlaceSeaportLarge) {
+    // Check all tiles in footprint are buildable
+    let canBuild = true;
+    for (let dy = 0; dy < fh && canBuild; dy++) {
+      for (let dx = 0; dx < fw && canBuild; dx++) {
+        const tx = tile.x + dx, ty = tile.y + dy;
+        if (!isInBounds(state.map, tx, ty)) { canBuild = false; break; }
+        if (getTile(state.map, tx, ty) !== TileType.Grass &&
+            getTile(state.map, tx, ty) !== TileType.Road &&
+            getTile(state.map, tx, ty) !== TileType.Rail) { canBuild = false; break; }
+        if (state.industries.some((ind) =>
+          tx >= ind.position.x && tx < ind.position.x + ind.size.x &&
+          ty >= ind.position.y && ty < ind.position.y + ind.size.y
+        )) { canBuild = false; break; }
+        if (state.buildings.some((b) =>
+          tx >= b.position.x && tx < b.position.x + (b as { size?: { x: number; y: number } }).size?.x! &&
+          ty >= b.position.y && ty < b.position.y + (b as { size?: { x: number; y: number } }).size?.y!
+        )) { canBuild = false; break; }
+      }
+    }
     color = canBuild ? 'rgba(0, 255, 0, 0.25)' : 'rgba(255, 0, 0, 0.25)';
   } else if (tool === ToolType.BuildBridge) {
     const tileType = getTile(state.map, tile.x, tile.y);
@@ -33,7 +62,19 @@ export function drawHover(ctx: CanvasRenderingContext2D, state: GameState, uiSta
   }
 
   ctx.fillStyle = color;
-  ctx.fillRect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+  ctx.fillRect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, fw * TILE_SIZE, fh * TILE_SIZE);
+
+  // Line-drag preview (BuildRoad / LayRail) — axis-locked, no diagonals
+  if ((tool === ToolType.BuildRoad || tool === ToolType.LayRail) && uiState.lineDragStart) {
+    const line = axisLine(uiState.lineDragStart, tile);
+    ctx.fillStyle = 'rgba(100, 230, 100, 0.38)';
+    for (const t of line) {
+      ctx.fillRect(t.x * TILE_SIZE, t.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+    // Mark start tile distinctly
+    ctx.fillStyle = 'rgba(60, 200, 60, 0.55)';
+    ctx.fillRect(uiState.lineDragStart.x * TILE_SIZE, uiState.lineDragStart.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+  }
 }
 
 export function drawSelection(ctx: CanvasRenderingContext2D, tile: Vec2 | null): void {
@@ -48,27 +89,42 @@ export function drawSelection(ctx: CanvasRenderingContext2D, tile: Vec2 | null):
   );
 }
 
-/** Draw dashed link-range box when hovering PlaceStation or PlaceDepot */
+/** Draw dashed link-range box when hovering PlaceStation or PlaceDepot,
+ *  and show the building footprint for all multi-tile buildings. */
 export function drawPlacementPreview(ctx: CanvasRenderingContext2D, uiState: UIState): void {
   const tile = uiState.hoveredTile;
   if (!tile) return;
   const tool = uiState.activeTool;
-  if (tool !== ToolType.PlaceStation && tool !== ToolType.PlaceDepot) return;
 
-  const r = STATION_LINK_RANGE;
-  const px = (tile.x - r) * TILE_SIZE;
-  const py = (tile.y - r) * TILE_SIZE;
-  const size = (r * 2 + 1) * TILE_SIZE;
+  // Link-range overlay for station/depot
+  if (tool === ToolType.PlaceStation || tool === ToolType.PlaceDepot) {
+    const r = STATION_LINK_RANGE;
+    const px = (tile.x - r) * TILE_SIZE;
+    const py = (tile.y - r) * TILE_SIZE;
+    const size = (r * 2 + 1) * TILE_SIZE;
 
-  ctx.save();
-  ctx.strokeStyle = 'rgba(80, 200, 255, 0.65)';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([5, 4]);
-  ctx.strokeRect(px, py, size, size);
-  ctx.fillStyle = 'rgba(80, 200, 255, 0.05)';
-  ctx.fillRect(px, py, size, size);
-  ctx.setLineDash([]);
-  ctx.restore();
+    ctx.save();
+    ctx.strokeStyle = 'rgba(80, 200, 255, 0.65)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(px, py, size, size);
+    ctx.fillStyle = 'rgba(80, 200, 255, 0.05)';
+    ctx.fillRect(px, py, size, size);
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // Footprint outline for all building tools (including multi-tile)
+  const [fw, fh] = TOOL_FOOTPRINT[tool] ?? [0, 0];
+  if (fw > 1 || fh > 1) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 220, 80, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, fw * TILE_SIZE, fh * TILE_SIZE);
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
 }
 
 /** Draw vehicle route overlays — all assigned vehicles get a route overlay.

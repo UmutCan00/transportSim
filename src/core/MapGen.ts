@@ -9,6 +9,7 @@ import {
   createSteelMill, createFactory,
   createNeighborhood,
   createIronMine, createSmelter, createChemicalPlant, createChemDistributor, createMarket, createLockedNeighborhood,
+  createPassengerTerminal, createLockedPassengerTerminal,
 } from './Industry.ts';
 import {
   NOISE_SCALE, WATER_THRESHOLD, MOUNTAIN_THRESHOLD,
@@ -201,6 +202,8 @@ export function generateMap(
     spawn(createChemicalPlant);
     spawn(createChemDistributor);
     spawn(createMarket);
+    // Passenger terminal — one per active city for inter-city travel
+    spawn(createPassengerTerminal);
     // Consumption buildings (neighborhoods)
     for (let n = 0; n < NEIGHBORHOODS_PER_CITY; n++) {
       spawn(createNeighborhood);
@@ -208,24 +211,41 @@ export function generateMap(
   }
 
   // ── Spawn locked city clusters ────────────────────────────────────────────
+  // City 0 (if exists): surrounded by a mountain ring on mainLand
+  // City 1 (if exists): placed on a dedicated small island (water-surrounded)
+  const mountainRingCityIdx = 0;
+  const islandCityIdx = 1;
+
   for (let i = 0; i < lockedCenters.length; i++) {
-    const center = lockedCenters[i];
+    let center = lockedCenters[i];
     const lockedCityId = activeCenters.length + i;
     const unlockCost = i === 0 ? 120_000 : i === 1 ? 250_000 : 400_000;
-    // Each locked city gets a handful of neighborhoods (locked) that unlock together
-    for (let n = 0; n < NEIGHBORHOODS_PER_CITY; n++) {
-      const pos = findSpotNear(rng, map, placed, mainLand, center, CITY_CLUSTER_RADIUS, 400);
-      if (pos) {
-        const nb = createLockedNeighborhood(nextId++, pos, unlockCost);
-        nb.cityId = lockedCityId;
-        industries.push(nb);
-        placed.push(pos);
-        stampIndustry(map, pos);
+
+    // ── Special city: mountain ring ──
+    if (i === mountainRingCityIdx) {
+      // Organic mountain valley: clear inner zone, noisy mountain ring around it
+      carveNaturalMountainCity(map, center, noiseMtn, CITY_CLUSTER_RADIUS + 2, CITY_CLUSTER_RADIUS + 12);
+    }
+
+    // ── Special city: island ──
+    if (i === islandCityIdx) {
+      // Pick a water location well away from mainLand edge and create a full-size island
+      const islandCenter = pickIslandCenter(rng, map, width, height);
+      if (islandCenter) {
+        // Island radius CITY_CLUSTER_RADIUS+8 gives 6-tile grass margin beyond industry zone
+        carveIsland(map, islandCenter, CITY_CLUSTER_RADIUS + 8);
+        center = islandCenter;
+        lockedCenters[i] = islandCenter;
       }
     }
-    // Also place some raw industries around each locked city so there's reason to unlock
+
+    // landSet: both special cities use null (industries placed within their carved terrain)
+    const lockedLandSet: Set<number> | null =
+      (i === islandCityIdx || i === mountainRingCityIdx) ? null : mainLand;
+
+    // Helper: spawn one industry near this locked city center
     const spawn = (factory: (id: number, p: Vec2) => Industry) => {
-      const pos = findSpotNear(rng, map, placed, mainLand, center, CITY_CLUSTER_RADIUS, 300);
+      const pos = findSpotNear(rng, map, placed, lockedLandSet, center, CITY_CLUSTER_RADIUS, 500);
       if (pos) {
         const ind = factory(nextId++, pos);
         ind.cityId = lockedCityId;
@@ -234,11 +254,45 @@ export function generateMap(
         stampIndustry(map, pos);
       }
     };
+
+    // Full city — same industry set as active cities
+    // Raw producers
     spawn(createCoalMine);
     spawn(createForest);
     spawn(createFarm);
-    spawn(createIronMine);
     spawn(createOilWell);
+    spawn(createIronMine);
+    // Processors
+    spawn(createPowerPlant);
+    spawn(createSawmill);
+    spawn(createBakery);
+    spawn(createRefinery);
+    spawn(createSteelMill);
+    spawn(createFactory);
+    spawn(createSmelter);
+    spawn(createChemicalPlant);
+    spawn(createChemDistributor);
+    spawn(createMarket);
+    // Locked passenger terminal
+    const ptPos = findSpotNear(rng, map, placed, lockedLandSet, center, CITY_CLUSTER_RADIUS, 500);
+    if (ptPos) {
+      const pt = createLockedPassengerTerminal(nextId++, ptPos, unlockCost);
+      pt.cityId = lockedCityId;
+      industries.push(pt);
+      placed.push(ptPos);
+      stampIndustry(map, ptPos);
+    }
+    // Locked neighborhoods
+    for (let n = 0; n < NEIGHBORHOODS_PER_CITY; n++) {
+      const pos = findSpotNear(rng, map, placed, lockedLandSet, center, CITY_CLUSTER_RADIUS, 500);
+      if (pos) {
+        const nb = createLockedNeighborhood(nextId++, pos, unlockCost);
+        nb.cityId = lockedCityId;
+        industries.push(nb);
+        placed.push(pos);
+        stampIndustry(map, pos);
+      }
+    }
   }
 
   return { map, industries, nextId };
@@ -310,12 +364,13 @@ function stampIndustry(map: TileMap, pos: Vec2): void {
 /**
  * Find a valid 2×2 grass spot within `radius` tiles of `center`.
  * Falls back to the global findIndustrySpot if no nearby spot is found.
+ * Pass `null` for `landSet` to skip the land-connectivity check (e.g. island cities).
  */
 function findSpotNear(
   rng: Random,
   map: TileMap,
   existing: Vec2[],
-  mainLand: Set<number>,
+  landSet: Set<number> | null,
   center: Vec2,
   radius: number,
   maxAttempts: number,
@@ -334,7 +389,7 @@ function findSpotNear(
       for (let dx = 0; dx < INDUSTRY_SIZE && valid; dx++) {
         const idx = (y + dy) * map.width + (x + dx);
         if (map.tiles[idx] !== TileType.Grass) valid = false;
-        if (!mainLand.has(idx)) valid = false;
+        if (landSet !== null && !landSet.has(idx)) valid = false;
       }
     }
     if (!valid) continue;
@@ -352,8 +407,9 @@ function findSpotNear(
 
     return { x, y };
   }
-  // Fallback: search anywhere on the map
-  return findIndustrySpot(rng, map, existing, mainLand, 400);
+  // Fallback: search anywhere on the map (only when using mainLand)
+  if (landSet !== null) return findIndustrySpot(rng, map, existing, landSet, 400);
+  return null;
 }
 
 /**
@@ -395,4 +451,99 @@ function pickCityCenters(
     }
   }
   return centers;
+}
+
+/**
+ * Carve a natural-looking mountain city: a clear grass valley at `center`
+ * with an organic mountain landscape around it, driven by `noiseMtn` so
+ * peaks are irregular and varied — not a perfect ring.
+ */
+function carveNaturalMountainCity(
+  map: TileMap, center: Vec2, noiseMtn: Float32Array,
+  innerRadius: number, denseRadius: number,
+): void {
+  const { width, height, tiles } = map;
+  const sampleRadius = denseRadius + 8; // wider fade zone
+
+  for (let dy = -sampleRadius; dy <= sampleRadius; dy++) {
+    for (let dx = -sampleRadius; dx <= sampleRadius; dx++) {
+      const x = center.x + dx;
+      const y = center.y + dy;
+      if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
+      const idx = y * width + x;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist <= innerRadius) {
+        // City valley — clear to grass
+        if (tiles[idx] === TileType.Mountain || tiles[idx] === TileType.Water) {
+          tiles[idx] = TileType.Grass;
+        }
+      } else if (dist <= denseRadius) {
+        // Transition zone: blend distance factor with noise for organic edge
+        const t = (dist - innerRadius) / (denseRadius - innerRadius); // 0→1
+        const n = noiseMtn[idx]; // 0→1
+        // High t (far from city) or high noise → mountain; otherwise grass
+        if (t * 0.55 + n * 0.65 > 0.65) {
+          tiles[idx] = TileType.Mountain;
+        } else if (tiles[idx] === TileType.Water) {
+          tiles[idx] = TileType.Grass;
+        }
+      } else if (dist <= sampleRadius) {
+        // Outer fringe: add extra mountains where noise is already high
+        if (noiseMtn[idx] > 0.60) {
+          tiles[idx] = TileType.Mountain;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Find a deep-water location and carve a small oval grass island there.
+ * Returns the island center or null if no suitable location found.
+ */
+function pickIslandCenter(rng: Random, map: TileMap, width: number, height: number): Vec2 | null {
+  // Need enough margin to fit the full island (radius CITY_CLUSTER_RADIUS+8 = 28)
+  const islandRadius = CITY_CLUSTER_RADIUS + 8;
+  const margin = islandRadius + 4;
+  for (let attempt = 0; attempt < 600; attempt++) {
+    const x = rng.int(margin, width - margin);
+    const y = rng.int(margin, height - margin);
+    // Must be water
+    if (map.tiles[y * width + x] !== TileType.Water) continue;
+    // Check that a large surrounding zone is mostly water
+    let waterCount = 0;
+    const checkR = islandRadius + 4;
+    for (let dy = -checkR; dy <= checkR; dy++) {
+      for (let dx = -checkR; dx <= checkR; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        if (map.tiles[ny * width + nx] === TileType.Water) waterCount++;
+      }
+    }
+    const totalArea = (2 * checkR + 1) * (2 * checkR + 1);
+    if (waterCount < totalArea * 0.65) continue;
+    return { x, y };
+  }
+  return null;
+}
+
+/** Carve an oval island of grass tiles centred at `center` with given `radius`. */
+function carveIsland(map: TileMap, center: Vec2, radius: number): void {
+  const { width, height, tiles } = map;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const x = center.x + dx;
+      const y = center.y + dy;
+      if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist <= radius) {
+        if (dist <= radius - 2) {
+          tiles[y * width + x] = TileType.Grass;
+        } else {
+          tiles[y * width + x] = TileType.Sand; // beach fringe
+        }
+      }
+    }
+  }
 }

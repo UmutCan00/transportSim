@@ -9,6 +9,7 @@ export function createUIState(): UIState {
     selectedEntityId: null,
     selectedEntityType: null,
     activePanel: 'none',
+    lineDragStart: null,
     toasts: [],
   };
 }

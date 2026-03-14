@@ -3,7 +3,7 @@ import { VehicleState, VehicleType } from './types.ts';
 import { findPath, findFlightPath, findWaterPath } from './Pathfinding.ts';
 import { deliverCargoToIndustry, takeCargoFromIndustry } from './Industry.ts';
 import { isTransitHub } from './Building.ts';
-import { earn } from './Economy.ts';
+import { earn, recordTransaction } from './Economy.ts';
 import { DELIVERY_REWARDS, TRUCK_CAPACITY, TRUCK_SPEED,
   LOCOMOTIVE_SPEED, LOCOMOTIVE_CAPACITY,
   PLANE_SPEED, PLANE_CAPACITY, SHIP_SPEED, SHIP_CAPACITY,
@@ -13,6 +13,7 @@ import {
   getTruckCapacityMult,
   getStationCapacityMult,
   getDeliveryRewardMult,
+  getCargoDeliveryBonus,
   isAutoLoaderActive,
 } from './TechTree.ts';
 
@@ -155,8 +156,9 @@ function executeStationAction(
 
   if (actualDelivered > 0) {
     const baseReward = DELIVERY_REWARDS[cargoType] ?? 200;
-    const reward = Math.floor(baseReward * (actualDelivered / 20) * getDeliveryRewardMult(state));
+    const reward = Math.floor(baseReward * (actualDelivered / 20) * getDeliveryRewardMult(state) * getCargoDeliveryBonus(state, cargoType));
     earn(state.economy, reward);
+    recordTransaction(state.economy, state.time.tick, reward, `📦 ${cargoType} × ${actualDelivered}`);
     state.economy.deliveriesCompleted++;
     state.economy.cargoDelivered[cargoType] =
       (state.economy.cargoDelivered[cargoType] ?? 0) + actualDelivered;

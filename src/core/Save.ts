@@ -61,6 +61,33 @@ export function loadFromSlot(slot: SaveSlot): GameState | null {
     if ((parsed as { devMode?: boolean }).devMode === undefined) {
       (parsed as { devMode: boolean }).devMode = false;
     }
+    // Migrate missing difficulty/theme fields
+    if ((parsed as { difficulty?: string }).difficulty === undefined) {
+      (parsed as { difficulty: string }).difficulty = 'normal';
+    }
+    if ((parsed as { theme?: string }).theme === undefined) {
+      (parsed as { theme: string }).theme = 'dark';
+    }
+    // Migrate missing tile counts (recalculate from map data)
+    if ((parsed as { roadTileCount?: number }).roadTileCount === undefined) {
+      let roads = 0, rails = 0;
+      // TileType.Road=1, TileType.Rail=5
+      for (const t of parsed.map.tiles) {
+        if (t === 1) roads++;
+        else if (t === 5) rails++;
+      }
+      (parsed as { roadTileCount: number }).roadTileCount = roads;
+      (parsed as { railTileCount: number }).railTileCount = rails;
+    }
+    // Migrate missing economy maintenance fields
+    if ((parsed.economy as { totalMaintenancePaid?: number }).totalMaintenancePaid === undefined) {
+      (parsed.economy as { totalMaintenancePaid: number }).totalMaintenancePaid = 0;
+      (parsed.economy as { lastMaintenanceBill: number }).lastMaintenanceBill = 0;
+    }
+    // Migrate missing transaction history
+    if (!Array.isArray((parsed.economy as { transactions?: unknown }).transactions)) {
+      (parsed.economy as { transactions: unknown[] }).transactions = [];
+    }
     return parsed;
   } catch {
     return null;
