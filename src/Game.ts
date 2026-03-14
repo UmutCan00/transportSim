@@ -14,6 +14,8 @@ import { TechId } from './core/types.ts';
 import { TILE_SIZE } from './constants.ts';
 import { migrateLegacySave } from './core/Save.ts';
 
+const CAMERA_KEY_PAN_SPEED = TILE_SIZE * 12;
+
 export class Game {
   state: GameState;
   uiState: UIState;
@@ -25,6 +27,7 @@ export class Game {
   private canvas: HTMLCanvasElement;
   private lastTime = 0;
   private accumulator = 0;
+  private pressedKeys = new Set<string>();
 
   constructor(canvas: HTMLCanvasElement, uiContainer: HTMLElement, devMode = false, preloadedState?: GameState) {
     this.canvas = canvas;
@@ -107,6 +110,17 @@ export class Game {
         e.preventDefault();
         this.centerOnFirstCity();
       }
+      if (!(e.target as HTMLElement)?.matches?.('input,textarea,button')) {
+        if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') {
+          e.preventDefault();
+          this.pressedKeys.add(e.code);
+        }
+      }
+    });
+    document.addEventListener('keyup', (e) => {
+      if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') {
+        this.pressedKeys.delete(e.code);
+      }
     });
 
     requestAnimationFrame((t) => this.frame(t));
@@ -119,6 +133,7 @@ export class Game {
     try {
       const dt = now - this.lastTime;
       this.lastTime = now;
+      this.updateKeyboardCamera(dt);
 
       // Fixed-timestep simulation
       const tickDuration = getTickDuration(this.state.time.speed);
@@ -160,6 +175,15 @@ export class Game {
     this.uiState.toasts.push({ id, msg, ttl: 4000 });
     // Keep max 4 toasts
     if (this.uiState.toasts.length > 4) this.uiState.toasts.shift();
+  }
+
+  private updateKeyboardCamera(dt: number): void {
+    if (this.pressedKeys.size === 0) return;
+    const move = (CAMERA_KEY_PAN_SPEED * dt) / 1000;
+    if (this.pressedKeys.has('KeyW')) this.camera.pan(0, move);
+    if (this.pressedKeys.has('KeyS')) this.camera.pan(0, -move);
+    if (this.pressedKeys.has('KeyA')) this.camera.pan(move, 0);
+    if (this.pressedKeys.has('KeyD')) this.camera.pan(-move, 0);
   }
 
   /** Center camera on the first active city (cityId 0). Falls back to map center. */

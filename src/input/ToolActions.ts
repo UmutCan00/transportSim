@@ -5,6 +5,9 @@ import {
   createStation, createDepot, createAirport, createSeaport,
   createTrainYard, autoLinkStation, buildingOccupiesTile,
 } from '../core/Building.ts';
+import {
+  canPlaceFootprint, hasAdjacentWater, isOccupiedByBuilding, isOccupiedByIndustry,
+} from '../core/Placement.ts';
 import { canAfford, spend } from '../core/Economy.ts';
 import { generateId } from '../core/GameState.ts';
 import {
@@ -213,34 +216,6 @@ function handleDemolish(state: GameState, tx: number, ty: number): boolean {
   return false;
 }
 
-function isOccupiedByBuilding(state: GameState, tx: number, ty: number): boolean {
-  return state.buildings.some((b) => buildingOccupiesTile(b, tx, ty));
-}
-
-function isOccupiedByIndustry(state: GameState, tx: number, ty: number): boolean {
-  return state.industries.some((ind) =>
-    tx >= ind.position.x && tx < ind.position.x + ind.size.x &&
-    ty >= ind.position.y && ty < ind.position.y + ind.size.y
-  );
-}
-
-/** Check that all tiles in a w×h footprint rooted at (tx,ty) are free to build on. */
-function canPlaceFootprint(
-  state: GameState, tx: number, ty: number, w: number, h: number
-): boolean {
-  for (let dy = 0; dy < h; dy++) {
-    for (let dx = 0; dx < w; dx++) {
-      const x = tx + dx, y = ty + dy;
-      if (!isInBounds(state.map, x, y)) return false;
-      const tile = getTile(state.map, x, y);
-      if (tile === TileType.Water || tile === TileType.Mountain) return false;
-      if (isOccupiedByBuilding(state, x, y)) return false;
-      if (isOccupiedByIndustry(state, x, y)) return false;
-    }
-  }
-  return true;
-}
-
 function handleLayRail(state: GameState, tx: number, ty: number): boolean {
   if (!isRailwayUnlocked(state)) return false;
   if (!isInBounds(state.map, tx, ty)) return false;
@@ -310,23 +285,7 @@ function handlePlaceSeaport(
   const [w, h] = tier === 'large' ? [3, 3] : [2, 2];
   const cost = tier === 'large' ? SEAPORT_LARGE_COST : SEAPORT_SMALL_COST;
   if (!canPlaceFootprint(state, tx, ty, w, h)) return false;
-  // At least one adjacent tile must be water
-  const hasCoast = ((): boolean => {
-    for (let dy = 0; dy < h; dy++) {
-      for (let dx = 0; dx < w; dx++) {
-        const nx = tx + dx, ny = ty + dy;
-        const neighbors = [
-          { x: nx - 1, y: ny }, { x: nx + 1, y: ny },
-          { x: nx, y: ny - 1 }, { x: nx, y: ny + 1 },
-        ];
-        if (neighbors.some(
-          ({ x, y }) => isInBounds(state.map, x, y) && getTile(state.map, x, y) === TileType.Water
-        )) return true;
-      }
-    }
-    return false;
-  })();
-  if (!hasCoast) return false;
+  if (!hasAdjacentWater(state, tx, ty, w, h)) return false;
   if (!canAfford(state.economy, cost)) return false;
 
   spend(state.economy, cost);
@@ -339,4 +298,3 @@ function handlePlaceSeaport(
   uiState.activePanel = 'depot';
   return true;
 }
-

@@ -24,17 +24,18 @@ export const TRAIN_YARD_COST = 30_000;      // rail train yard (2×2)
 export const TRUCK_COST       = 15_000;     // basic truck
 export const CARGO_TRUCK_COST = 28_000;
 export const HEAVY_HAULER_COST = 55_000;
+export const BUS_COST         = 18_000;
 export const LOCOMOTIVE_COST   = 50_000;    // freight train
 export const EXPRESS_TRAIN_COST = 85_000;
-export const PLANE_COST        = 40_000;    // light aircraft
+export const PLANE_COST        = 36_000;    // light aircraft
 export const CARGO_PLANE_COST  = 75_000;
 export const JUMBO_JET_COST    = 140_000;
 export const SHIP_COST         = 30_000;    // river barge
 export const CARGO_SHIP_COST   = 60_000;
 export const SUPERTANKER_COST  = 120_000;
-export const AIRPORT_SMALL_COST = 55_000;   // 2×2
+export const AIRPORT_SMALL_COST = 48_000;   // 2×2
 export const AIRPORT_LARGE_COST = 130_000;  // 3×3
-export const SEAPORT_SMALL_COST = 40_000;   // 2×2
+export const SEAPORT_SMALL_COST = 34_000;   // 2×2
 export const SEAPORT_LARGE_COST = 95_000;   // 3×3
 // Keep old names for backward compat in existing code
 export const AIRPORT_COST  = AIRPORT_SMALL_COST;
@@ -101,8 +102,9 @@ export const IRON_MINE_CAPACITY = 80;
 export const SMELTER_CAPACITY = 90;
 export const CHEM_PLANT_CAPACITY = 70;
 export const MARKET_CAPACITY = 200;
-export const CHEM_DIST_CAPACITY = 150;export const PASSENGER_TERMINAL_CAPACITY = 120;
-export const PASSENGER_PRODUCTION_INTERVAL = 15; // ticks between each +10 passengers generated
+export const CHEM_DIST_CAPACITY = 150;
+export const PASSENGER_TERMINAL_CAPACITY = 180;
+export const PASSENGER_PRODUCTION_INTERVAL = 10; // ticks between each +10 passengers generated
 // Vehicles — base stats (before tech multipliers)
 export const TRUCK_SPEED            = 0.20;
 export const TRUCK_CAPACITY         = 20;
@@ -110,6 +112,8 @@ export const CARGO_TRUCK_SPEED      = 0.17;
 export const CARGO_TRUCK_CAPACITY   = 35;
 export const HEAVY_HAULER_SPEED     = 0.13;
 export const HEAVY_HAULER_CAPACITY  = 55;
+export const BUS_SPEED              = 0.24;
+export const BUS_CAPACITY           = 28;
 
 export const LOCOMOTIVE_SPEED       = 0.38;
 export const LOCOMOTIVE_CAPACITY    = 60;
@@ -194,6 +198,7 @@ export const TRUCK_MAINTENANCE = 220;
 /** Extra cost multiplier for larger trucks: cargo = 1.5×, heavy = 2.2× */
 export const CARGO_TRUCK_MAINTENANCE_MULT = 1.5;
 export const HEAVY_HAULER_MAINTENANCE_MULT = 2.2;
+export const BUS_MAINTENANCE = 240;
 /** Cost per locomotive per billing cycle */
 export const LOCO_MAINTENANCE = 900;
 export const EXPRESS_TRAIN_MAINTENANCE_MULT = 1.5;

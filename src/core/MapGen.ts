@@ -224,19 +224,17 @@ export function generateMap(
     // ── Special city: mountain ring ──
     if (i === mountainRingCityIdx) {
       // Organic mountain valley: clear inner zone, noisy mountain ring around it
-      carveNaturalMountainCity(map, center, noiseMtn, CITY_CLUSTER_RADIUS + 2, CITY_CLUSTER_RADIUS + 12);
+      carveNaturalMountainCity(map, center, noiseMtn, noise2, CITY_CLUSTER_RADIUS + 1, CITY_CLUSTER_RADIUS + 14);
     }
 
     // ── Special city: island ──
     if (i === islandCityIdx) {
       // Pick a water location well away from mainLand edge and create a full-size island
-      const islandCenter = pickIslandCenter(rng, map, width, height);
-      if (islandCenter) {
-        // Island radius CITY_CLUSTER_RADIUS+8 gives 6-tile grass margin beyond industry zone
-        carveIsland(map, islandCenter, CITY_CLUSTER_RADIUS + 8);
-        center = islandCenter;
-        lockedCenters[i] = islandCenter;
-      }
+      const islandCenter = pickIslandCenter(rng, map, width, height) ?? forceIslandCenter(map, lockedCenters[i]);
+      // Island radius gives enough room for a full city while keeping a clear water moat.
+      carveIsland(map, islandCenter, CITY_CLUSTER_RADIUS + 10, noise1, noise3);
+      center = islandCenter;
+      lockedCenters[i] = islandCenter;
     }
 
     // landSet: both special cities use null (industries placed within their carved terrain)
@@ -249,6 +247,7 @@ export function generateMap(
       if (pos) {
         const ind = factory(nextId++, pos);
         ind.cityId = lockedCityId;
+        lockIndustry(ind, unlockCost);
         industries.push(ind);
         placed.push(pos);
         stampIndustry(map, pos);
@@ -294,6 +293,9 @@ export function generateMap(
       }
     }
   }
+
+  const allCityCenters = [...activeCenters, ...lockedCenters];
+  sanitizeIndustryPlacements(rng, map, industries, allCityCenters, mainLand, activeCenters.length);
 
   return { map, industries, nextId };
 }
@@ -359,6 +361,49 @@ function stampIndustry(map: TileMap, pos: Vec2): void {
   // This function exists as a hook for future terrain modification.
   void map;
   void pos;
+}
+
+function lockIndustry(ind: Industry, unlockCost: number): void {
+  ind.locked = true;
+  ind.unlockCost = unlockCost;
+}
+
+function isIndustryFootprintValid(map: TileMap, pos: Vec2): boolean {
+  for (let dy = 0; dy < INDUSTRY_SIZE; dy++) {
+    for (let dx = 0; dx < INDUSTRY_SIZE; dx++) {
+      const x = pos.x + dx;
+      const y = pos.y + dy;
+      if (x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
+      if (map.tiles[y * map.width + x] !== TileType.Grass) return false;
+    }
+  }
+  return true;
+}
+
+function sanitizeIndustryPlacements(
+  rng: Random,
+  map: TileMap,
+  industries: Industry[],
+  cityCenters: Vec2[],
+  mainLand: Set<number>,
+  activeCityCount: number,
+): void {
+  const occupied: Vec2[] = [];
+  const sorted = [...industries].sort((a, b) => a.id - b.id);
+  for (const ind of sorted) {
+    if (isIndustryFootprintValid(map, ind.position)) {
+      occupied.push(ind.position);
+      continue;
+    }
+    const cityId = ind.cityId ?? 0;
+    const center = cityCenters[cityId] ?? cityCenters[0] ?? ind.position;
+    const landSet = cityId < activeCityCount ? mainLand : null;
+    const fallback = findSpotNear(rng, map, occupied, landSet, center, CITY_CLUSTER_RADIUS + 10, 1200);
+    if (fallback) {
+      ind.position = fallback;
+      occupied.push(fallback);
+    }
+  }
 }
 
 /**
@@ -459,11 +504,11 @@ function pickCityCenters(
  * peaks are irregular and varied — not a perfect ring.
  */
 function carveNaturalMountainCity(
-  map: TileMap, center: Vec2, noiseMtn: Float32Array,
+  map: TileMap, center: Vec2, noiseMtn: Float32Array, shapeNoise: Float32Array,
   innerRadius: number, denseRadius: number,
 ): void {
   const { width, height, tiles } = map;
-  const sampleRadius = denseRadius + 8; // wider fade zone
+  const sampleRadius = denseRadius + 10;
 
   for (let dy = -sampleRadius; dy <= sampleRadius; dy++) {
     for (let dx = -sampleRadius; dx <= sampleRadius; dx++) {
@@ -471,26 +516,31 @@ function carveNaturalMountainCity(
       const y = center.y + dy;
       if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
       const idx = y * width + x;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const baseDist = Math.sqrt(dx * dx + dy * dy);
+      const ridgeNoise = noiseMtn[idx];
+      const warpNoise = shapeNoise[idx];
+      const directionalWarp = ((warpNoise - 0.5) * 4.5) + ((ridgeNoise - 0.5) * 3.5);
+      const dist = baseDist + directionalWarp;
+      const valleyRadius = innerRadius + (warpNoise - 0.5) * 3;
+      const ridgeRadius = denseRadius + (ridgeNoise - 0.5) * 5;
 
-      if (dist <= innerRadius) {
+      if (dist <= valleyRadius) {
         // City valley — clear to grass
         if (tiles[idx] === TileType.Mountain || tiles[idx] === TileType.Water) {
           tiles[idx] = TileType.Grass;
         }
-      } else if (dist <= denseRadius) {
+      } else if (dist <= ridgeRadius) {
         // Transition zone: blend distance factor with noise for organic edge
-        const t = (dist - innerRadius) / (denseRadius - innerRadius); // 0→1
-        const n = noiseMtn[idx]; // 0→1
-        // High t (far from city) or high noise → mountain; otherwise grass
-        if (t * 0.55 + n * 0.65 > 0.65) {
+        const t = (dist - valleyRadius) / Math.max(1, ridgeRadius - valleyRadius);
+        const ridgeStrength = t * 0.55 + ridgeNoise * 0.60 + (1 - warpNoise) * 0.15;
+        if (ridgeStrength > 0.67) {
           tiles[idx] = TileType.Mountain;
         } else if (tiles[idx] === TileType.Water) {
           tiles[idx] = TileType.Grass;
         }
       } else if (dist <= sampleRadius) {
         // Outer fringe: add extra mountains where noise is already high
-        if (noiseMtn[idx] > 0.60) {
+        if (ridgeNoise > 0.58 || (ridgeNoise > 0.48 && warpNoise < 0.35)) {
           tiles[idx] = TileType.Mountain;
         }
       }
@@ -528,21 +578,50 @@ function pickIslandCenter(rng: Random, map: TileMap, width: number, height: numb
   return null;
 }
 
-/** Carve an oval island of grass tiles centred at `center` with given `radius`. */
-function carveIsland(map: TileMap, center: Vec2, radius: number): void {
+/** Guaranteed fallback for the locked island city: reuse a valid inland center and flood around it. */
+function forceIslandCenter(map: TileMap, preferred: Vec2): Vec2 {
+  const margin = CITY_CLUSTER_RADIUS + 14;
+  const x = Math.max(margin, Math.min(map.width - margin - 1, preferred.x));
+  const y = Math.max(margin, Math.min(map.height - margin - 1, preferred.y));
+  return { x, y };
+}
+
+/** Carve an irregular island with a water moat and a narrow sandy shoreline. */
+function carveIsland(
+  map: TileMap,
+  center: Vec2,
+  radius: number,
+  shapeA: Float32Array,
+  shapeB: Float32Array,
+): void {
   const { width, height, tiles } = map;
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
+  const waterRadius = radius + 7;
+
+  for (let dy = -waterRadius; dy <= waterRadius; dy++) {
+    for (let dx = -waterRadius; dx <= waterRadius; dx++) {
       const x = center.x + dx;
       const y = center.y + dy;
       if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
+      const idx = y * width + x;
+      const nA = shapeA[idx];
+      const nB = shapeB[idx];
+      const angle = Math.atan2(dy, dx);
+      const angularWave = Math.sin(angle * 3 + nA * Math.PI * 2) * 1.8 +
+        Math.cos(angle * 5 - nB * Math.PI * 2) * 1.1;
+      const localRadius = radius + (nA - 0.5) * 6 + (nB - 0.5) * 4 + angularWave;
+      const sandBand = 1.8 + nB * 1.5;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist <= radius) {
-        if (dist <= radius - 2) {
-          tiles[y * width + x] = TileType.Grass;
-        } else {
-          tiles[y * width + x] = TileType.Sand; // beach fringe
-        }
+
+      if (dist <= waterRadius + 1.5) {
+        tiles[idx] = TileType.Water;
+      }
+
+      if (dist > localRadius + 2 && dist <= waterRadius) {
+        tiles[idx] = TileType.Water;
+        continue;
+      }
+      if (dist <= localRadius) {
+        tiles[idx] = dist >= localRadius - sandBand ? TileType.Sand : TileType.Grass;
       }
     }
   }

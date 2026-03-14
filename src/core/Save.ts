@@ -44,6 +44,9 @@ export function loadFromSlot(slot: SaveSlot): GameState | null {
       if ((v as { vehicleType?: string }).vehicleType === undefined) {
         (v as { vehicleType: string }).vehicleType = 'truck';
       }
+      if (!(v as { model?: string }).model) {
+        (v as { model: string }).model = 'basic_truck';
+      }
     }
     // Migrate industries missing name (added in later version)
     for (const ind of parsed.industries) {

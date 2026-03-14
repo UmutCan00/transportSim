@@ -1,7 +1,8 @@
 import type { Vec2, GameState, UIState } from '../core/types.ts';
 import { ToolType, TileType } from '../core/types.ts';
 import { TILE_SIZE, COLORS, STATION_LINK_RANGE } from '../constants.ts';
-import { getTile, isInBounds } from '../core/World.ts';
+import { getTile } from '../core/World.ts';
+import { canPlaceToolAt } from '../core/Placement.ts';
 import { getVehicleRenderPosition } from '../core/Vehicle.ts';
 import { axisLine } from '../input/InputHandler.ts';
 
@@ -28,25 +29,7 @@ export function drawHover(ctx: CanvasRenderingContext2D, state: GameState, uiSta
       tool === ToolType.PlaceTrainYard || tool === ToolType.PlaceAirport ||
       tool === ToolType.PlaceAirportLarge || tool === ToolType.PlaceSeaport ||
       tool === ToolType.PlaceSeaportLarge) {
-    // Check all tiles in footprint are buildable
-    let canBuild = true;
-    for (let dy = 0; dy < fh && canBuild; dy++) {
-      for (let dx = 0; dx < fw && canBuild; dx++) {
-        const tx = tile.x + dx, ty = tile.y + dy;
-        if (!isInBounds(state.map, tx, ty)) { canBuild = false; break; }
-        if (getTile(state.map, tx, ty) !== TileType.Grass &&
-            getTile(state.map, tx, ty) !== TileType.Road &&
-            getTile(state.map, tx, ty) !== TileType.Rail) { canBuild = false; break; }
-        if (state.industries.some((ind) =>
-          tx >= ind.position.x && tx < ind.position.x + ind.size.x &&
-          ty >= ind.position.y && ty < ind.position.y + ind.size.y
-        )) { canBuild = false; break; }
-        if (state.buildings.some((b) =>
-          tx >= b.position.x && tx < b.position.x + (b as { size?: { x: number; y: number } }).size?.x! &&
-          ty >= b.position.y && ty < b.position.y + (b as { size?: { x: number; y: number } }).size?.y!
-        )) { canBuild = false; break; }
-      }
-    }
+    const canBuild = canPlaceToolAt(state, tool, tile.x, tile.y);
     color = canBuild ? 'rgba(0, 255, 0, 0.25)' : 'rgba(255, 0, 0, 0.25)';
   } else if (tool === ToolType.BuildBridge) {
     const tileType = getTile(state.map, tile.x, tile.y);

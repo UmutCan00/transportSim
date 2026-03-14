@@ -1,9 +1,10 @@
 import type { Vehicle, Vec2 } from './types.ts';
-import { VehicleState, VehicleType, VehicleModel } from './types.ts';
+import { VehicleState, VehicleType, VehicleModel, CargoType } from './types.ts';
 import {
   TRUCK_SPEED, TRUCK_CAPACITY,
   CARGO_TRUCK_SPEED, CARGO_TRUCK_CAPACITY,
   HEAVY_HAULER_SPEED, HEAVY_HAULER_CAPACITY,
+  BUS_SPEED, BUS_CAPACITY,
   LOCOMOTIVE_SPEED, LOCOMOTIVE_CAPACITY,
   EXPRESS_TRAIN_SPEED, EXPRESS_TRAIN_CAPACITY,
   PLANE_SPEED, PLANE_CAPACITY,
@@ -42,6 +43,9 @@ export function createCargoTruck(id: number, position: Vec2): Vehicle {
 }
 export function createHeavyHauler(id: number, position: Vec2): Vehicle {
   return makeVehicle(id, position, VehicleType.Truck, VehicleModel.HeavyHauler, HEAVY_HAULER_SPEED, HEAVY_HAULER_CAPACITY);
+}
+export function createBus(id: number, position: Vec2): Vehicle {
+  return makeVehicle(id, position, VehicleType.Truck, VehicleModel.Bus, BUS_SPEED, BUS_CAPACITY);
 }
 
 // ── Locomotives ───────────────────────────────────────────
@@ -110,4 +114,14 @@ export function getVehicleRenderPosition(vehicle: Vehicle): Vec2 {
     x: current.x + (next.x - current.x) * t,
     y: current.y + (next.y - current.y) * t,
   };
+}
+
+export function canVehicleCarryCargo(vehicle: Vehicle, cargoType: CargoType): boolean {
+  if (vehicle.model === VehicleModel.Bus) return cargoType === CargoType.Passengers;
+  if (cargoType === CargoType.Passengers) {
+    return vehicle.vehicleType === VehicleType.Locomotive ||
+      vehicle.vehicleType === VehicleType.Plane ||
+      vehicle.vehicleType === VehicleType.Ship;
+  }
+  return true;
 }

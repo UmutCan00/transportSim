@@ -172,6 +172,7 @@ export enum VehicleModel {
   BasicTruck    = 'basic_truck',
   CargoTruck    = 'cargo_truck',
   HeavyHauler   = 'heavy_hauler',
+  Bus           = 'bus',
   // Locomotives
   FreightTrain  = 'freight_train',
   ExpressTrain  = 'express_train',

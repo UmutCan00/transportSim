@@ -1,9 +1,10 @@
 import type { GameState, Vehicle, Station } from './types.ts';
-import { VehicleState, VehicleType } from './types.ts';
+import { BuildingType, VehicleState, VehicleType, CargoType } from './types.ts';
 import { findPath, findFlightPath, findWaterPath } from './Pathfinding.ts';
 import { deliverCargoToIndustry, takeCargoFromIndustry } from './Industry.ts';
 import { isTransitHub } from './Building.ts';
 import { earn, recordTransaction } from './Economy.ts';
+import { canVehicleCarryCargo } from './Vehicle.ts';
 import { DELIVERY_REWARDS, TRUCK_CAPACITY, TRUCK_SPEED,
   LOCOMOTIVE_SPEED, LOCOMOTIVE_CAPACITY,
   PLANE_SPEED, PLANE_CAPACITY, SHIP_SPEED, SHIP_CAPACITY,
@@ -23,6 +24,7 @@ import {
  */
 export function tickRoutes(state: GameState): void {
   tickStationSupply(state);
+  tickStationDemand(state);
   for (const vehicle of state.vehicles) {
     advanceVehicleRoute(vehicle, state);
   }
@@ -37,16 +39,32 @@ function tickStationSupply(state: GameState): void {
     if (station.linkedIndustryId === null) continue;
     const industry = state.industries.find((i) => i.id === station.linkedIndustryId);
     if (!industry || industry.produces === null) continue;
-    // Keep cargo type in sync with what the industry actually outputs
-    if (station.cargo.type !== industry.produces) {
-      station.cargo.type = industry.produces;
-      station.cargo.amount = 0;
-    }
-    station.cargo.capacity = STATION_CARGO_CAPACITY * capMult;
+    if (station.cargo.amount > 0 && station.cargo.type !== industry.produces) continue;
+    station.cargo.type = industry.produces;
+    station.cargo.capacity = Math.max(station.cargo.capacity, STATION_CARGO_CAPACITY * capMult);
     const space = station.cargo.capacity - station.cargo.amount;
     if (space > 0 && industry.stock.amount > 0) {
       takeCargoFromIndustry(industry, station.cargo, space);
     }
+  }
+}
+
+/** Push buffered cargo from a transit hub into its linked consumer industry. */
+function tickStationDemand(state: GameState): void {
+  for (const building of state.buildings) {
+    if (!isTransitHub(building)) continue;
+    if (building.type !== BuildingType.Station) continue;
+    const station = building as Station;
+    if (station.linkedIndustryId === null || station.cargo.amount <= 0) continue;
+    const industry = state.industries.find((i) => i.id === station.linkedIndustryId);
+    if (!industry || industry.consumes !== station.cargo.type || industry.locked) continue;
+    const moved = deliverCargoToIndustry(industry, station.cargo.amount);
+    if (moved <= 0) continue;
+    station.cargo.amount -= moved;
+    if (station.cargo.amount <= 0) {
+      station.cargo.amount = 0;
+    }
+    awardDelivery(state, station.cargo.type, moved);
   }
 }
 
@@ -71,6 +89,8 @@ function advanceVehicleRoute(vehicle: Vehicle, state: GameState): void {
   const order = route.orders[orderIdx];
   const targetBuilding = state.buildings.find((b) => b.id === order.stationId);
   if (!targetBuilding || !isTransitHub(targetBuilding)) return;
+  if (vehicle.vehicleType === VehicleType.Plane && targetBuilding.type !== BuildingType.Airport) return;
+  if (vehicle.vehicleType === VehicleType.Ship && targetBuilding.type !== BuildingType.Seaport) return;
   const target = targetBuilding as Station; // Airports/Seaports share the same cargo shape
 
   // Already at the target station — execute the action
@@ -116,6 +136,7 @@ function executeStationAction(
 
   if (action === 'load') {
     if (station.cargo.amount <= 0) return false; // Wait for cargo to accumulate
+    if (!canVehicleCarryCargo(vehicle, station.cargo.type)) return false;
     // Capacity differs by vehicle type
     const baseCapacity = vehicle.vehicleType === VehicleType.Locomotive ? LOCOMOTIVE_CAPACITY
       : vehicle.vehicleType === VehicleType.Plane ? PLANE_CAPACITY
@@ -140,30 +161,30 @@ function executeStationAction(
   }
 
   const cargoType = vehicle.cargo!;
-  const amount = vehicle.cargoAmount;
-  vehicle.cargoAmount = 0;
-  vehicle.cargo = null;
-
-  let actualDelivered = 0;
-  if (station.linkedIndustryId !== null) {
-    const industry = state.industries.find((i) => i.id === station.linkedIndustryId);
-    if (industry !== undefined && industry.consumes === cargoType && !industry.locked) {
-      actualDelivered = deliverCargoToIndustry(industry, amount);
-    }
-    // If industry doesn't consume this type, or is locked, cargo is lost
-  }
-  // If no linked industry, cargo is lost too
-
-  if (actualDelivered > 0) {
-    const baseReward = DELIVERY_REWARDS[cargoType] ?? 200;
-    const reward = Math.floor(baseReward * (actualDelivered / 20) * getDeliveryRewardMult(state) * getCargoDeliveryBonus(state, cargoType));
-    earn(state.economy, reward);
-    recordTransaction(state.economy, state.time.tick, reward, `📦 ${cargoType} × ${actualDelivered}`);
-    state.economy.deliveriesCompleted++;
-    state.economy.cargoDelivered[cargoType] =
-      (state.economy.cargoDelivered[cargoType] ?? 0) + actualDelivered;
+  if (!canVehicleCarryCargo(vehicle, cargoType)) return false;
+  if (station.cargo.amount > 0 && station.cargo.type !== cargoType) return false;
+  const space = station.cargo.capacity - station.cargo.amount;
+  if (space <= 0) return false;
+  const moved = Math.min(space, vehicle.cargoAmount);
+  if (moved <= 0) return false;
+  station.cargo.type = cargoType;
+  station.cargo.amount += moved;
+  vehicle.cargoAmount -= moved;
+  if (vehicle.cargoAmount <= 0) {
+    vehicle.cargoAmount = 0;
+    vehicle.cargo = null;
   }
 
   if (!autoLoader) vehicle.state = VehicleState.Unloading;
   return true;
+}
+
+function awardDelivery(state: GameState, cargoType: CargoType, amount: number): void {
+  const baseReward = DELIVERY_REWARDS[cargoType] ?? 200;
+  const reward = Math.floor(baseReward * (amount / 20) * getDeliveryRewardMult(state) * getCargoDeliveryBonus(state, cargoType));
+  if (reward <= 0) return;
+  earn(state.economy, reward);
+  recordTransaction(state.economy, state.time.tick, reward, `📦 ${cargoType} × ${amount}`);
+  state.economy.deliveriesCompleted++;
+  state.economy.cargoDelivered[cargoType] = (state.economy.cargoDelivered[cargoType] ?? 0) + amount;
 }

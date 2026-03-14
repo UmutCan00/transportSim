@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "sim": "tsx scripts/sim.ts",
+    "sim:single": "tsx scripts/sim.ts --single",
     "sim:verbose": "tsx scripts/sim.ts --verbose",
     "sim:long": "tsx scripts/sim.ts --ticks 10000"
   },

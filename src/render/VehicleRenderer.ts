@@ -1,5 +1,5 @@
 import type { Vehicle } from '../core/types.ts';
-import { VehicleType } from '../core/types.ts';
+import { VehicleType, VehicleModel } from '../core/types.ts';
 import { getVehicleRenderPosition } from '../core/Vehicle.ts';
 import { TILE_SIZE, COLORS } from '../constants.ts';
 
@@ -14,6 +14,7 @@ const CARGO_COLOR: Record<string, string> = {
   iron:      '#8B3a1a',
   chemicals: '#44cc88',
   food:      '#e8a742',
+  passengers:'#66b7ff',
 };
 
 export function drawVehicles(ctx: CanvasRenderingContext2D, vehicles: Vehicle[]): void {
@@ -24,6 +25,7 @@ export function drawVehicles(ctx: CanvasRenderingContext2D, vehicles: Vehicle[])
     const isLoco  = v.vehicleType === VehicleType.Locomotive;
     const isPlane = v.vehicleType === VehicleType.Plane;
     const isShip  = v.vehicleType === VehicleType.Ship;
+    const isBus   = v.model === VehicleModel.Bus;
 
     if (isLoco) {
       // Locomotive: blue rounded rectangle (wider, shorter)
@@ -63,6 +65,16 @@ export function drawVehicles(ctx: CanvasRenderingContext2D, vehicles: Vehicle[])
       ctx.strokeStyle = '#00ddcc';
       ctx.lineWidth = 1;
       ctx.stroke();
+    } else if (isBus) {
+      const w = TILE_SIZE * 0.56;
+      const h = TILE_SIZE * 0.34;
+      ctx.fillStyle = v.cargoAmount > 0 ? '#d8b340' : '#f2c84d';
+      ctx.beginPath();
+      ctx.roundRect(px - w / 2, py - h / 2, w, h, 4);
+      ctx.fill();
+      ctx.strokeStyle = '#3a2a00';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     } else {
       // Truck: orange/yellow square
       const size = TILE_SIZE * 0.46;
@@ -88,7 +100,7 @@ export function drawVehicles(ctx: CanvasRenderingContext2D, vehicles: Vehicle[])
     }
 
     // Vehicle ID label
-    const icon = isLoco ? '🚂' : isPlane ? '✈' : isShip ? '⛵' : '';
+    const icon = isBus ? '🚌' : isLoco ? '🚂' : isPlane ? '✈' : isShip ? '⛵' : '';
     ctx.font = `bold ${isLoco ? 8 : 7}px monospace`;
     ctx.fillStyle = isPlane ? '#224' : '#fff';
     ctx.textAlign = 'center';

@@ -1,5 +1,5 @@
 import type { GameState, UIState, Building, Industry, Vehicle, Objective, MapSize } from '../core/types.ts';
-import { SimSpeed, ToolType, BuildingType, TileType } from '../core/types.ts';
+import { SimSpeed, ToolType, BuildingType, TileType, VehicleType, VehicleModel } from '../core/types.ts';
 import { getTile } from '../core/World.ts';
 import { industryLabel } from '../core/Industry.ts';
 import {
@@ -8,7 +8,7 @@ import {
   isAdvancedAviationUnlocked, isDeepSeaUnlocked,
 } from '../core/TechTree.ts';
 import {
-  TRUCK_COST, LOCOMOTIVE_COST, PLANE_COST, SHIP_COST,
+  TRUCK_COST, LOCOMOTIVE_COST, PLANE_COST, SHIP_COST, BUS_COST,
   CARGO_TRUCK_COST, HEAVY_HAULER_COST, EXPRESS_TRAIN_COST,
   CARGO_PLANE_COST, JUMBO_JET_COST, CARGO_SHIP_COST, SUPERTANKER_COST,
   MAINTENANCE_INTERVAL,
@@ -16,11 +16,10 @@ import {
   STATION_COST, DEPOT_COST, TRAIN_YARD_COST,
   AIRPORT_SMALL_COST, SEAPORT_SMALL_COST,
   ROAD_MAINTENANCE_PER_TILE, RAIL_MAINTENANCE_PER_TILE,
-  TRUCK_MAINTENANCE, LOCO_MAINTENANCE, PLANE_MAINTENANCE, SHIP_MAINTENANCE,
   STATION_MAINTENANCE, DEPOT_MAINTENANCE, TRAIN_YARD_MAINTENANCE,
   AIRPORT_SMALL_MAINTENANCE, SEAPORT_SMALL_MAINTENANCE,
 } from '../constants.ts';
-import { createVehicle, createLocomotive, createPlane, createShip, createCargoTruck, createHeavyHauler, createExpressTrain, createCargoPLane, createJumboJet, createCargoShip, createSupertanker } from '../core/Vehicle.ts';
+import { createVehicle, createLocomotive, createPlane, createShip, createCargoTruck, createHeavyHauler, createExpressTrain, createCargoPLane, createJumboJet, createCargoShip, createSupertanker, createBus } from '../core/Vehicle.ts';
 import { generateId } from '../core/GameState.ts';
 import type { NewGameOptions } from '../core/GameState.ts';
 import { canAfford, spend } from '../core/Economy.ts';
@@ -53,15 +52,64 @@ const TOOLS: ToolDef[] = [
   { type: ToolType.PlaceSeaportLarge,label: 'Seaport L',    icon: '🛳️', shortcut: '',  requiresDeepSea: true },
 ];
 
+function fmtHudCost(cost: number): string {
+  return cost >= 1000 ? `$${(cost / 1000).toFixed(cost >= 10_000 ? 0 : 1)}k` : `$${cost}`;
+}
+
+function getToolHudText(tool: ToolType, state: GameState): string {
+  switch (tool) {
+    case ToolType.Select:
+      return 'Select: inspect buildings, industries, and vehicles to see links, cargo, and routes.';
+    case ToolType.BuildRoad:
+      return `${fmtHudCost(ROAD_COST)}/tile: Road links stations, depots, airports, and seaports for trucks and buses. Upkeep ${fmtHudCost(ROAD_MAINTENANCE_PER_TILE)}/cycle.`;
+    case ToolType.PlaceStation:
+      return `${fmtHudCost(STATION_COST)}: Station is the main land hub. It gathers nearby industry output and city demand, then hands cargo or passengers to trucks and trains. Upkeep ${fmtHudCost(STATION_MAINTENANCE)}/cycle.`;
+    case ToolType.PlaceDepot:
+      return `${fmtHudCost(DEPOT_COST)}: Truck depot buys cargo trucks and city buses for road routes, local pickup, and airport or seaport feeder lines. Upkeep ${fmtHudCost(DEPOT_MAINTENANCE)}/cycle.`;
+    case ToolType.Demolish:
+      return 'Demolish: remove roads, rails, and buildings for a partial refund.';
+    case ToolType.LayRail:
+      return `${fmtHudCost(RAIL_COST)}/tile: Rail creates fast long-distance corridors for freight trains and passenger trains. Upkeep ${fmtHudCost(RAIL_MAINTENANCE_PER_TILE)}/cycle.`;
+    case ToolType.PlaceTrainYard:
+      return `${fmtHudCost(TRAIN_YARD_COST)}: Train yard buys locomotives and express trains for heavy cargo or intercity passenger routes. Upkeep ${fmtHudCost(TRAIN_YARD_MAINTENANCE)}/cycle.`;
+    case ToolType.BuildBridge:
+      return `${fmtHudCost(BRIDGE_COST)}/tile: Bridge extends roads across water. Requires Bridging tech.`;
+    case ToolType.BuildTunnel:
+      return `${fmtHudCost(TUNNEL_COST)}/tile: Tunnel cuts roads through mountains so blocked valleys and ridges connect. Requires Tunneling tech.`;
+    case ToolType.PlaceAirport:
+      return `${fmtHudCost(AIRPORT_SMALL_COST)}: Small airport is an air transfer hub. Buses or trains bring passengers in, planes move them long distance, and nearby roads still matter for feeders. Upkeep ${fmtHudCost(AIRPORT_SMALL_MAINTENANCE)}/cycle.`;
+    case ToolType.PlaceAirportLarge:
+      return `Advanced Aviation: Large airport is a higher-capacity air hub with more storage and plane slots for busy long-range passenger and cargo routes.`;
+    case ToolType.PlaceSeaport:
+      return `${fmtHudCost(SEAPORT_SMALL_COST)}: Small seaport is a coastal transfer hub for ships, with bus or train feeders from the city. Must touch water. Upkeep ${fmtHudCost(SEAPORT_SMALL_MAINTENANCE)}/cycle.`;
+    case ToolType.PlaceSeaportLarge:
+      return `Deep Sea: Large seaport is a higher-capacity maritime hub with more ship slots and storage. Must touch water.`;
+    default:
+      return `Cash ${fmtHudCost(state.economy.money)}. T tech, O goals, M finance, ? help.`;
+  }
+}
+
+function canVehicleUseHub(vehicleType: VehicleType, building: Building): boolean {
+  if (vehicleType === VehicleType.Plane) return building.type === BuildingType.Airport;
+  if (vehicleType === VehicleType.Ship) return building.type === BuildingType.Seaport;
+  return building.type === BuildingType.Station ||
+    building.type === BuildingType.Airport ||
+    building.type === BuildingType.Seaport;
+}
+
 export class UIManager {
   private container: HTMLElement;
   private moneyEl!: HTMLElement;
   private tickEl!: HTMLElement;
   private speedEl!: HTMLElement;
   private seedEl!: HTMLElement;
+  private toolInfoEl!: HTMLElement;
   private infoEl!: HTMLElement;
   private panelEl!: HTMLElement;
   private toastEl!: HTMLElement;
+  private hudTopEl!: HTMLElement;
+  private hudSubbarEl!: HTMLElement;
+  private toolbarEl!: HTMLElement;
   private toolButtons: Map<ToolType, HTMLElement> = new Map();
   private onSpeedChange: (speed: SimSpeed) => void;
   private onToolChange: ((tool: ToolType) => void) | null = null;
@@ -79,6 +127,9 @@ export class UIManager {
   private _currentSpeed: SimSpeed = SimSpeed.Normal;
   private _minimapCollapsed = false;
   private _minimapCanvas: HTMLCanvasElement | null = null;
+  private _toolInfoExpanded = false;
+  private _toolInfoInteractive = false;
+  private _lastToolInfoText = '';
 
   // ── Theme definitions ──────────────────────────────────────────────
   private static readonly THEMES: Record<string, {
@@ -200,12 +251,12 @@ export class UIManager {
     this.container.innerHTML = `
       <div id="hud-top" style="
         position:absolute;top:0;left:0;right:0;
-        display:flex;justify-content:space-between;align-items:center;
+        display:flex;justify-content:space-between;align-items:center;gap:12px;
         padding:6px 12px;background:rgba(0,0,0,0.85);
         color:#fff;font-family:monospace;font-size:13px;
         pointer-events:auto;user-select:none;z-index:20;
       ">
-        <div style="display:flex;align-items:center;gap:14px;">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0;">
           <span id="hud-money" style="color:#4f4;font-weight:bold;">$0</span>
           <span id="hud-earned" style="color:var(--ui-text-muted,#aaa);font-size:11px;">earned: $0</span>
           <span id="hud-deliveries" style="color:#8cf;font-size:11px;">📦 0</span>
@@ -213,11 +264,12 @@ export class UIManager {
           <span id="hud-tick" style="color:var(--ui-text-muted,#aaa);">Tick: 0</span>
           <span id="hud-seed" style="color:#555;">Seed: 0</span>
         </div>
-        <div style="display:flex;align-items:center;gap:4px;">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:nowrap;justify-content:flex-end;flex-shrink:0;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.03);">
           <button id="btn-pause">⏸</button>
           <button id="btn-normal">1×</button>
           <button id="btn-fast">2×</button>
-          <span id="hud-speed" style="margin-left:6px;width:44px;">▶ 1×</span>
+          <button id="btn-dev">20×</button>
+          <span id="hud-speed" style="margin-left:8px;min-width:78px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,0.05);text-align:center;white-space:nowrap;">▶ 1×</span>
           <button id="btn-obj"    style="margin-left:8px;">🎯 Goals</button>
           <button id="btn-tech"   style="margin-left:4px;">🔬 Tech</button>
           <button id="btn-save"   style="margin-left:4px;">💾 Save</button>
@@ -226,15 +278,33 @@ export class UIManager {
         </div>
       </div>
 
+      <div id="hud-subbar" style="
+        position:absolute;top:44px;left:0;right:0;
+        padding:4px 12px;background:rgba(6,10,18,0.92);
+        border-top:1px solid rgba(255,255,255,0.05);
+        border-bottom:1px solid rgba(255,255,255,0.05);
+        pointer-events:auto;user-select:none;z-index:19;
+        box-sizing:border-box;
+      ">
+        <div id="hud-toolinfo" style="
+          color:var(--ui-text-muted,#9ab);font-size:11px;
+          padding:3px 10px;border:1px solid var(--ui-btn-border,#333);
+          border-radius:10px;background:rgba(255,255,255,0.04);
+          display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;
+          overflow:hidden;line-height:1.25em;max-width:560px;height:24px;
+          cursor:pointer;box-sizing:border-box;
+        ">Tool info</div>
+      </div>
+
       <div id="toolbar" style="
-        position:absolute;top:44px;left:0;
+        position:absolute;top:76px;left:0;
         display:flex;flex-direction:column;gap:2px;padding:6px;
         background:rgba(0,0,0,0.85);border-radius:0 6px 6px 0;
         pointer-events:auto;user-select:none;z-index:20;
       "></div>
 
       <div id="side-panel" style="
-        position:absolute;top:44px;right:0;
+        position:absolute;top:76px;right:0;
         width:290px;max-height:calc(100vh - 100px);overflow-y:auto;
         padding:10px;background:rgba(0,0,0,0.92);
         color:#ccc;font-family:monospace;font-size:12px;
@@ -279,12 +349,16 @@ export class UIManager {
     `;
 
     this.moneyEl = document.getElementById('hud-money')!;
+    this.hudTopEl = document.getElementById('hud-top')!;
+    this.hudSubbarEl = document.getElementById('hud-subbar')!;
     this.tickEl  = document.getElementById('hud-tick')!;
     this.speedEl = document.getElementById('hud-speed')!;
     this.seedEl  = document.getElementById('hud-seed')!;
+    this.toolInfoEl = document.getElementById('hud-toolinfo')!;
     this.infoEl  = document.getElementById('hud-info')!;
     this.panelEl = document.getElementById('side-panel')!;
     this.toastEl = document.getElementById('toast-container')!;
+    this.toolbarEl = document.getElementById('toolbar')!;
     this._minimapCanvas = document.getElementById('minimap-canvas') as HTMLCanvasElement | null;
 
     document.getElementById('minimap-header')!.addEventListener('click', () => {
@@ -298,6 +372,7 @@ export class UIManager {
     document.getElementById('btn-pause')!.addEventListener('click',  () => this.onSpeedChange(SimSpeed.Paused));
     document.getElementById('btn-normal')!.addEventListener('click', () => this.onSpeedChange(SimSpeed.Normal));
     document.getElementById('btn-fast')!.addEventListener('click',   () => this.onSpeedChange(SimSpeed.Fast));
+    document.getElementById('btn-dev')!.addEventListener('click',    () => this.onSpeedChange(SimSpeed.Dev));
     document.getElementById('btn-newmap')!.addEventListener('click', () => this.togglePanel('newgame'));
     document.getElementById('btn-tech')!.addEventListener('click',   () => this.togglePanel('tech'));
     document.getElementById('btn-obj')!.addEventListener('click',    () => this.togglePanel('objectives'));
@@ -305,8 +380,15 @@ export class UIManager {
     document.getElementById('btn-help')!.addEventListener('click',   () => this.togglePanel('help'));
     // Clicking the money counter opens the finance panel
     document.getElementById('hud-money')!.addEventListener('click', () => this.togglePanel('money'));
+    this.toolInfoEl.addEventListener('click', () => {
+      if (!this._toolInfoInteractive) return;
+      this._toolInfoExpanded = !this._toolInfoExpanded;
+      this.applyToolInfoLayout();
+      this.updateToolInfoInteractivity();
+      this.syncHudLayout();
+    });
 
-    const toolbar = document.getElementById('toolbar')!;
+    const toolbar = this.toolbarEl;
     for (const tool of TOOLS) {
       const btn = document.createElement('button');
       btn.style.cssText = `
@@ -331,26 +413,7 @@ export class UIManager {
       if (btn) btn.style.display = 'none';
     }
 
-    const legend = document.createElement('div');
-    legend.style.cssText = 'padding:6px 4px;color:var(--ui-text-muted,#555);font-family:monospace;font-size:10px;line-height:1.7;border-top:1px solid var(--ui-btn-border,#333);margin-top:4px;';
-    legend.innerHTML = `
-      <span style="color:var(--ui-text-muted,#888);font-size:10px;">── Build (↻ maint/cycle) ──</span><br>
-      <span title="Build cost">🛤️ Road  $${ROAD_COST}</span> <span style="color:#f88;" title="Maintenance per tile per cycle">↻$${ROAD_MAINTENANCE_PER_TILE}/tile</span><br>
-      <span title="Build cost">🚂 Rail  $${RAIL_COST}</span> <span style="color:#f88;">↻$${RAIL_MAINTENANCE_PER_TILE}/tile</span><br>
-      🌉 Bridge $${(BRIDGE_COST/1000).toFixed(1)}k &nbsp;⛏️ Tunnel $${(TUNNEL_COST/1000).toFixed(0)}k<br>
-      🏪 Station $${(STATION_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${STATION_MAINTENANCE}</span><br>
-      🏗️ Depot  $${(DEPOT_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${DEPOT_MAINTENANCE}</span><br>
-      🏭 TrainYd $${(TRAIN_YARD_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${TRAIN_YARD_MAINTENANCE}</span><br>
-      ✈ Airport $${(AIRPORT_SMALL_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${AIRPORT_SMALL_MAINTENANCE}</span><br>
-      ⚓ Seaport $${(SEAPORT_SMALL_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${SEAPORT_SMALL_MAINTENANCE}</span><br>
-      <span style="color:var(--ui-text-muted,#888);">── Vehicles ──────────────</span><br>
-      🚚 Truck $${(TRUCK_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${TRUCK_MAINTENANCE}</span><br>
-      🚂 Loco $${(LOCOMOTIVE_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${LOCO_MAINTENANCE}</span><br>
-      ✈ Plane $${(PLANE_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${(PLANE_MAINTENANCE/1000).toFixed(1)}k</span><br>
-      ⛵ Ship $${(SHIP_COST/1000).toFixed(0)}k <span style="color:#f88;">↻$${SHIP_MAINTENANCE}</span><br>
-      <span style="color:var(--ui-text-muted,#555);margin-top:4px;display:block;">T=Tech O=Goals S=Save<br>?=Help M=Finance N=New<br>Drag/RClick=Pan Scroll=Zoom</span>
-    `;
-    toolbar.appendChild(legend);
+    this.syncHudLayout();
   }
 
   private togglePanel(which: 'tech' | 'objectives' | 'newgame' | 'help' | 'save' | 'money'): void {
@@ -382,7 +445,6 @@ export class UIManager {
       }
       if (e.key === 't' || e.key === 'T')  this.togglePanel('tech');
       if (e.key === 'o' || e.key === 'O')  this.togglePanel('objectives');
-      if (e.key === 's' || e.key === 'S')  this.togglePanel('save');
       if (e.key === '?')                   this.togglePanel('help');
       if (e.key === 'm' || e.key === 'M')  this.togglePanel('money');
       if (e.key === 'n' || e.key === 'N')  this.togglePanel('newgame');
@@ -459,6 +521,15 @@ export class UIManager {
       btn.style.borderColor = isActive ? 'var(--ui-active-border, #3399ff)' : 'var(--ui-btn-border, #555)';
       btn.style.color = 'var(--ui-text, #fff)';
     }
+    const toolInfoText = getToolHudText(uiState.activeTool, state);
+    if (toolInfoText !== this._lastToolInfoText) {
+      this._toolInfoExpanded = false;
+      this._lastToolInfoText = toolInfoText;
+    }
+    this.toolInfoEl.textContent = toolInfoText;
+    this.applyToolInfoLayout();
+    this.updateToolInfoInteractivity();
+    this.syncHudLayout();
 
     const completedCount = state.objectives.filter((o) => o.completed).length;
     const objBtn = document.getElementById('btn-obj');
@@ -495,27 +566,146 @@ export class UIManager {
     this.updateMinimap(state, camera);
   }
 
+  private syncHudLayout(): void {
+    if (!this.hudTopEl || !this.hudSubbarEl || !this.toolbarEl || !this.panelEl) return;
+    const subbarTop = this.hudTopEl.offsetHeight;
+    this.hudSubbarEl.style.top = `${subbarTop}px`;
+    const top = this.hudTopEl.offsetHeight + this.hudSubbarEl.offsetHeight + 8;
+    this.toolbarEl.style.top = `${top}px`;
+    this.panelEl.style.top = `${top}px`;
+    this.panelEl.style.maxHeight = `calc(100vh - ${top + 56}px)`;
+  }
+
+  private applyToolInfoLayout(): void {
+    if (!this.toolInfoEl) return;
+    if (this._toolInfoExpanded) {
+      this.toolInfoEl.style.display = '-webkit-box';
+      this.toolInfoEl.style.overflow = 'hidden';
+      this.toolInfoEl.style.maxWidth = '560px';
+      this.toolInfoEl.style.height = '42px';
+      this.toolInfoEl.style.lineHeight = '1.25em';
+      this.toolInfoEl.style.borderRadius = '12px';
+      this.toolInfoEl.style.setProperty('-webkit-line-clamp', '2');
+      this.toolInfoEl.style.setProperty('-webkit-box-orient', 'vertical');
+    } else {
+      this.toolInfoEl.style.display = '-webkit-box';
+      this.toolInfoEl.style.overflow = 'hidden';
+      this.toolInfoEl.style.maxWidth = '560px';
+      this.toolInfoEl.style.height = '24px';
+      this.toolInfoEl.style.lineHeight = '1.25em';
+      this.toolInfoEl.style.borderRadius = '999px';
+      this.toolInfoEl.style.setProperty('-webkit-line-clamp', '1');
+      this.toolInfoEl.style.setProperty('-webkit-box-orient', 'vertical');
+    }
+  }
+
+  private updateToolInfoInteractivity(): void {
+    if (!this.toolInfoEl) return;
+    const wasExpanded = this._toolInfoExpanded;
+    if (wasExpanded) {
+      this._toolInfoExpanded = false;
+      this.applyToolInfoLayout();
+    }
+    const collapsesText = this.toolInfoEl.scrollHeight > this.toolInfoEl.clientHeight + 1 ||
+      this.toolInfoEl.scrollWidth > this.toolInfoEl.clientWidth + 1;
+    if (wasExpanded) {
+      this._toolInfoExpanded = true;
+      this.applyToolInfoLayout();
+    }
+    this._toolInfoInteractive = collapsesText;
+    this.toolInfoEl.style.cursor = collapsesText ? 'pointer' : 'default';
+    this.toolInfoEl.title = collapsesText
+      ? (this._toolInfoExpanded ? 'Click to collapse tool help' : 'Click to expand tool help')
+      : '';
+  }
+
   private renderTechPanel(state: GameState): void {
     // Only re-render when tech count or money meaningfully changes
     const hash = `${state.tech.filter((t) => t.unlocked).length}:${Math.floor(state.economy.money / 1000)}`;
     if (hash === this._lastTechHash) return;
     this._lastTechHash = hash;
 
-    // HOI4-style grid: each cell is (treeCol × 152px) wide, (treeRow × 100px) tall
-    const CELL_W = 152, CELL_H = 100;
+    const techById = new Map(state.tech.map((t) => [t.id, t]));
+    const exclusivesFor = (group?: string): string[] => {
+      if (!group) return [];
+      return state.tech.filter((t) => t.exclusiveGroup === group).map((t) => t.name);
+    };
+
+    // Roomier spacing keeps connector lines visible and prevents text collisions.
+    const CELL_W = 220;
+    const ROW_GAP = 30;
+    const CARD_WIDTH = CELL_W - 16;
+    const CONTENT_WIDTH = CARD_WIDTH - 20;
+    const rowLabels = ['Foundations', 'Expansion', 'Specialization', 'Strategy', 'Endgame'];
+    const estimateWrappedLines = (text: string, charsPerLine: number): number => {
+      if (!text) return 1;
+      return text
+        .split('\n')
+        .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / charsPerLine)), 0);
+    };
+    const estimateCardHeight = (tech: typeof state.tech[number], prereqText: string, exclusiveText: string): number => {
+      const titleLines = Math.max(1, Math.ceil(tech.name.length / 20));
+      const descriptionLines = Math.max(2, Math.min(6, estimateWrappedLines(tech.description, 34)));
+      const prereqLines = Math.max(1, Math.min(3, Math.ceil(prereqText.length / 32)));
+      const exclusiveLines = exclusiveText ? Math.max(1, Math.min(2, Math.ceil(exclusiveText.length / 30))) : 0;
+      return 92 + titleLines * 14 + descriptionLines * 14 + prereqLines * 12 + exclusiveLines * 12;
+    };
     const maxCol = Math.max(...state.tech.map((t) => t.treeCol ?? 0));
     const maxRow = Math.max(...state.tech.map((t) => t.treeRow ?? 0));
     const gridW = (maxCol + 1) * CELL_W;
-    const gridH = (maxRow + 1) * CELL_H;
+    const rowHeights = Array.from({ length: maxRow + 1 }, () => 140);
+    const rowTops = Array.from({ length: maxRow + 1 }, () => 0);
+    const cardLayouts = new Map<string, { left: number; top: number; height: number }>();
+    const precomputedText = new Map<string, { prereqText: string; exclusiveText: string }>();
+
+    for (const tech of state.tech) {
+      const prereqNodes = tech.requires.map((r) => techById.get(r)).filter((t): t is NonNullable<typeof t> => !!t);
+      const exclusiveNames = exclusivesFor(tech.exclusiveGroup).filter((name) => name !== tech.name);
+      const prereqText = prereqNodes.length === 0
+        ? 'Prereqs: none'
+        : `Prereqs: ${prereqNodes.map((t) => t.unlocked ? `✓ ${t.name}` : t.name).join(', ')}`;
+      const exclusiveText = exclusiveNames.length === 0 ? '' : `✕ Exclusive with: ${exclusiveNames.join(', ')}`;
+      precomputedText.set(tech.id, { prereqText, exclusiveText });
+      const estimatedHeight = estimateCardHeight(tech, prereqText, exclusiveText);
+      const row = tech.treeRow ?? 0;
+      rowHeights[row] = Math.max(rowHeights[row], estimatedHeight + 20);
+    }
+
+    let runningTop = 0;
+    for (let row = 0; row <= maxRow; row += 1) {
+      rowTops[row] = runningTop;
+      runningTop += rowHeights[row] + ROW_GAP;
+    }
+    const gridH = runningTop - ROW_GAP;
+
+    const rowBands = rowLabels.slice(0, maxRow + 1).map((label, idx) => `
+      <div style="
+        position:absolute;left:0;top:${rowTops[idx]}px;width:${gridW}px;height:${rowHeights[idx]}px;
+        border-bottom:1px solid rgba(255,255,255,0.05);
+        background:${idx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.01)'};
+        pointer-events:none;
+      ">
+        <div style="
+          position:absolute;left:10px;top:8px;
+          color:rgba(255,255,255,0.22);font-size:10px;font-weight:bold;letter-spacing:0.08em;
+          text-transform:uppercase;
+        ">${label}</div>
+      </div>
+    `).join('');
 
     let nodeHtml = '';
     for (const tech of state.tech) {
       const col = tech.treeCol ?? 0, row = tech.treeRow ?? 0;
-      const left = col * CELL_W + 4, top = row * CELL_H + 4;
+      const left = col * CELL_W + 4, top = rowTops[row] + 24;
       const excl = !!tech.exclusiveGroup;
       const blocked = isExclusivelyBlocked(state, tech.id);
-      const prereqs = tech.requires.every((r) => state.tech.find((t) => t.id === r)?.unlocked);
+      const prereqNodes = tech.requires.map((r) => techById.get(r)).filter((t): t is NonNullable<typeof t> => !!t);
+      const prereqs = prereqNodes.every((t) => t.unlocked);
       const affordable = canAfford(state.economy, tech.cost);
+      const exclusiveNames = exclusivesFor(tech.exclusiveGroup).filter((name) => name !== tech.name);
+      const textBlock = precomputedText.get(tech.id)!;
+      const cardHeight = estimateCardHeight(tech, textBlock.prereqText, textBlock.exclusiveText);
+      cardLayouts.set(tech.id, { left, top, height: cardHeight });
 
       let bg = '#1e1e1e', border = '#444', textColor = '#888';
       if (tech.unlocked) { bg = '#1a3d1a'; border = '#3f3'; textColor = '#cfc'; }
@@ -523,10 +713,10 @@ export class UIManager {
       else if (prereqs && affordable) { bg = '#1a2a4a'; border = '#48f'; textColor = '#adf'; }
       else if (prereqs) { bg = '#2a2010'; border = '#a63'; textColor = '#ca8'; }
 
-      const btnOrStatus = tech.unlocked
-        ? `<span style="color:#4f4;font-size:10px;">✓ Researched</span>`
+      const statusHtml = tech.unlocked
+        ? `<span style="color:#4f4;font-size:10px;font-weight:bold;">✓ Researched</span>`
         : blocked
-        ? `<span style="color:#733;font-size:10px;">⛔ Blocked</span>`
+        ? `<span style="color:#f77;font-size:10px;font-weight:bold;">✕ Locked by exclusive choice</span>`
         : (prereqs && affordable)
         ? `<button data-tech="${tech.id}" style="
             padding:2px 6px;font-size:10px;font-family:monospace;
@@ -534,27 +724,46 @@ export class UIManager {
             cursor:pointer;border-radius:2px;white-space:nowrap;
           ">Unlock $${(tech.cost/1000).toFixed(0)}k</button>`
         : prereqs
-        ? `<span style="color:#a63;font-size:10px;">$${(tech.cost/1000).toFixed(0)}k</span>`
-        : `<span style="color:#555;font-size:10px;">🔒</span>`;
+        ? `<span style="color:#f3c36d;font-size:10px;">Need $${tech.cost.toLocaleString()}</span>`
+        : `<span style="color:#777;font-size:10px;">🔒 Waiting on prereqs</span>`;
 
-      const exclBadge = excl ? `<span title="Exclusive branch" style="font-size:9px;color:#fa0;margin-left:3px;">⚔</span>` : '';
+      const prereqHtml = prereqNodes.length === 0
+        ? `<span style="color:#5a6;font-size:9px;display:block;line-height:1.35;">Prereqs: none</span>`
+        : `<span style="color:#889;font-size:9px;display:block;line-height:1.35;white-space:normal;overflow-wrap:anywhere;">${textBlock.prereqText}</span>`;
+      const exclusiveHtml = exclusiveNames.length === 0
+        ? ''
+        : `<div style="color:#f88;font-size:9px;margin-top:3px;line-height:1.35;white-space:normal;overflow-wrap:anywhere;">${textBlock.exclusiveText}</div>`;
 
       nodeHtml += `
         <div style="
           position:absolute;left:${left}px;top:${top}px;
-          width:${CELL_W-10}px;padding:5px 6px;
+          width:${CARD_WIDTH}px;min-height:${cardHeight}px;padding:10px 10px 8px;
           background:${bg};border:1px solid ${border};border-radius:4px;
           font-family:monospace;font-size:11px;color:${textColor};
           ${excl ? 'border-style:dashed;' : ''}
-          box-sizing:border-box;
+          box-sizing:border-box;display:flex;flex-direction:column;gap:6px;
+          box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
         ">
-          <div style="display:flex;align-items:center;margin-bottom:2px;">
+          <div style="display:flex;align-items:flex-start;gap:6px;min-height:18px;">
             <span style="font-size:14px;margin-right:4px;">${tech.icon}</span>
-            <span style="font-weight:bold;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${tech.name}</span>
-            ${exclBadge}
+            <span style="font-weight:bold;flex:1;line-height:1.2;">${tech.name}</span>
+            ${excl ? `<span title="Exclusive branch" style="font-size:10px;color:#f88;font-weight:bold;">✕</span>` : ''}
           </div>
-          <div style="font-size:9px;color:var(--ui-text-muted,#888);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${tech.description}">${tech.description.split('\n')[0]}</div>
-          ${btnOrStatus}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;font-size:9px;color:var(--ui-text-muted,#9aa);">
+            <span style="padding:1px 6px;border-radius:999px;background:rgba(255,255,255,0.06);">Tier ${tech.tier}</span>
+            <span style="padding:1px 6px;border-radius:999px;background:rgba(255,255,255,0.06);">$${tech.cost.toLocaleString()}</span>
+          </div>
+          <div style="
+            font-size:9px;color:var(--ui-text-muted,#888);line-height:1.38;
+            max-width:${CONTENT_WIDTH}px;white-space:normal;overflow-wrap:anywhere;
+          ">${tech.description.replaceAll('\n', '<br>')}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:20px;">
+            ${statusHtml}
+          </div>
+          <div style="margin-top:auto;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);">
+            ${prereqHtml}
+            ${exclusiveHtml}
+          </div>
         </div>`;
     }
 
@@ -564,32 +773,41 @@ export class UIManager {
       for (const reqId of tech.requires) {
         const parent = state.tech.find((t) => t.id === reqId);
         if (!parent) continue;
-        const px = (parent.treeCol ?? 0) * CELL_W + CELL_W / 2;
-        const py = (parent.treeRow ?? 0) * CELL_H + CELL_H - 8;
-        const cx = (tech.treeCol ?? 0) * CELL_W + CELL_W / 2;
-        const cy = (tech.treeRow ?? 0) * CELL_H + 8;
+        const parentLayout = cardLayouts.get(parent.id);
+        const childLayout = cardLayouts.get(tech.id);
+        if (!parentLayout || !childLayout) continue;
+        const px = parentLayout.left + CARD_WIDTH / 2;
+        const py = parentLayout.top + parentLayout.height;
+        const cx = childLayout.left + CARD_WIDTH / 2;
+        const cy = childLayout.top;
         const color = parent.unlocked && tech.unlocked ? '#3f3' : parent.unlocked ? '#48f' : '#444';
-        svgLines += `<line x1="${px}" y1="${py}" x2="${cx}" y2="${cy}" stroke="${color}" stroke-width="1.5" stroke-dasharray="${tech.exclusiveGroup ? '4 3' : 'none'}"/>`;
+        const midY = py + Math.max(18, (cy - py) * 0.45);
+        svgLines += `<path d="M ${px} ${py} C ${px} ${midY}, ${cx} ${midY}, ${cx} ${cy}" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="${tech.exclusiveGroup ? '5 4' : 'none'}" opacity="0.9"/>`;
+        svgLines += `<circle cx="${cx}" cy="${cy}" r="2.5" fill="${color}" opacity="0.9"/>`;
       }
     }
     svgLines += `</svg>`;
 
-    const scrollWidth = Math.min(gridW, 780);
+    const scrollWidth = Math.min(gridW + 16, 1080);
     this.panelEl.style.width = `${scrollWidth}px`;
-    this.panelEl.style.maxWidth = 'calc(100vw - 140px)';
+    this.panelEl.style.maxWidth = 'calc(100vw - 48px)';
 
     this.panelEl.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
         <span style="color:#fff;font-size:14px;">🔬 Research Tree</span>
-        <div style="display:flex;gap:6px;align-items:center;font-size:10px;color:var(--ui-text-muted,#666);">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--ui-text-muted,#666);">
           <span style="border:1px solid #3f3;padding:1px 4px;border-radius:2px;">■ Researched</span>
-          <span style="border:1px dashed #48f;padding:1px 4px;border-radius:2px;">⚔ Exclusive</span>
+          <span style="border:1px dashed #f88;padding:1px 4px;border-radius:2px;">✕ Exclusive</span>
           <span style="border:1px solid #733;padding:1px 4px;border-radius:2px;">⛔ Blocked</span>
           <button id="btn-close-panel" style="background:none;border:none;color:var(--ui-text-muted,#888);cursor:pointer;font-size:14px;">✕</button>
         </div>
       </div>
-      <div style="overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 130px);">
-        <div style="position:relative;width:${gridW}px;height:${gridH}px;">
+      <div style="color:var(--ui-text-muted,#888);font-size:10px;margin-bottom:8px;line-height:1.45;">
+        Curved links show prerequisite flow. Cards keep the same research rules as before, but the layout is spaced out so names, descriptions, and branch conflicts stay readable.
+      </div>
+      <div style="overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 150px);padding:2px 2px 8px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;background:rgba(255,255,255,0.02);">
+        <div style="position:relative;width:${gridW}px;height:${gridH}px;padding:0 0 4px 0;">
+          ${rowBands}
           ${svgLines}
           ${nodeHtml}
         </div>
@@ -664,6 +882,7 @@ export class UIManager {
     const truckCost = Math.floor(TRUCK_COST * costMult);
     const cargoTruckCost = Math.floor(CARGO_TRUCK_COST * costMult);
     const heavyHaulerCost = Math.floor(HEAVY_HAULER_COST * costMult);
+    const busCost = Math.floor(BUS_COST * costMult);
     const locoCost = Math.floor(LOCOMOTIVE_COST * costMult);
     const exprTrainCost = Math.floor(EXPRESS_TRAIN_COST * costMult);
 
@@ -680,12 +899,13 @@ export class UIManager {
 
     if (!isTrainYard && !isAirport && !isSeaport) {
       // Road depot — trucks
-      const rows: Array<{ id: string; icon: string; label: string; cost: number; cap: number; speed: string; factory: string }> = [
+      const rows: Array<{ id: string; icon: string; label: string; cost: number; cap: number; speed: string; factory: string; note?: string }> = [
         { id: 'basic',  icon: '🚚', label: 'Basic Truck',  cost: truckCost,       cap: 20, speed: '●●○○', factory: 'basic' },
         { id: 'cargo',  icon: '🚛', label: 'Cargo Truck',  cost: cargoTruckCost,  cap: 35, speed: '●●○○', factory: 'cargo' },
         { id: 'heavy',  icon: '🚜', label: 'Heavy Hauler', cost: heavyHaulerCost, cap: 55, speed: '●○○○', factory: 'heavy' },
+        { id: 'bus',    icon: '🚌', label: 'City Bus',     cost: busCost,         cap: 28, speed: '●●●○', factory: 'bus', note: 'Passengers only' },
       ];
-      html += `<div style="color:var(--ui-text-muted,#aaa);font-size:11px;margin-bottom:4px;">Buy Trucks:</div>`;
+      html += `<div style="color:var(--ui-text-muted,#aaa);font-size:11px;margin-bottom:4px;">Buy Road Vehicles:</div>`;
       for (const r of rows) {
         const ok = canAfford(state.economy, r.cost);
         html += `<button data-buy="${r.factory}" style="
@@ -700,6 +920,7 @@ export class UIManager {
           <span style="flex:1;text-align:left;">${r.label}</span>
           <span style="color:var(--ui-text-muted,#888);font-size:10px;">📦${r.cap}</span>
           <span style="color:var(--ui-text-muted,#888);font-size:10px;">${r.speed}</span>
+          <span style="color:var(--ui-text-muted,#777);font-size:10px;">${r.note ?? ''}</span>
           <span style="color:#fc0;white-space:nowrap;">$${r.cost.toLocaleString()}</span>
         </button>`;
       }
@@ -781,7 +1002,6 @@ export class UIManager {
 
     // Transit hubs section
     const hubs = state.buildings.filter(
-
       (b) => b.type === BuildingType.Station || b.type === BuildingType.Airport || b.type === BuildingType.Seaport
     );
 
@@ -805,21 +1025,30 @@ export class UIManager {
       html += `<div style="color:#fc0;margin:8px 0 4px;font-size:11px;">Fleet (${allVehicles.length} vehicle${allVehicles.length !== 1 ? 's' : ''}):</div>`;
       for (const v of allVehicles) {
         const currentRoute = v.routeId != null ? state.routes.find((r) => r.id === v.routeId) : null;
-        const hubOpts = hubs.map(hubOption).join('');
-        const vIcon = v.vehicleType === 'locomotive' ? '🚂' : v.vehicleType === 'plane' ? '✈' : v.vehicleType === 'ship' ? '⛵' : '🚛';
+        const compatibleHubs = hubs.filter((hub) => canVehicleUseHub(v.vehicleType, hub));
+        const hubOpts = compatibleHubs.map(hubOption).join('');
+        const vIcon = v.model === VehicleModel.Bus ? '🚌' : v.vehicleType === 'locomotive' ? '🚂' : v.vehicleType === 'plane' ? '✈' : v.vehicleType === 'ship' ? '⛵' : '🚛';
         const routeName = currentRoute?.name ? ` "${currentRoute.name}"` : '';
+        const routeHint = v.model === VehicleModel.Bus
+          ? 'Buses carry passengers only and are ideal for city-to-hub feeder routes.'
+          : v.vehicleType === 'plane'
+          ? 'Planes can only travel airport to airport.'
+          : v.vehicleType === 'ship'
+            ? 'Ships can only travel seaport to seaport.'
+            : 'Road and rail vehicles can serve stations, airports, and seaports if connected.';
         html += `
           <div style="margin:4px 0;padding:6px;background:var(--ui-card-bg,#1a1a2e);border:1px solid var(--ui-card-border,#3a3a5a);border-radius:3px;">
             <div style="color:#fd0;font-weight:bold;">${vIcon} #${v.id} <span style="color:var(--ui-text-muted,#888);font-weight:normal;font-size:10px;">${v.state}</span></div>
             <div style="color:var(--ui-text-muted,#aaa);font-size:10px;">Cap: ${v.cargoAmount}/${v.cargoCapacity}</div>
+            <div style="color:var(--ui-text-muted,#777);font-size:10px;">${routeHint}</div>
             ${currentRoute ? `<div style="color:#4f4;font-size:10px;">✓ Route${routeName}</div>` : ''}
-            ${hubs.length >= 2 ? `
+            ${compatibleHubs.length >= 2 ? `
               <div style="margin-top:4px;font-size:10px;">
                 <input id="rname-${v.id}" placeholder="Route name" style="font-size:10px;background:var(--ui-input-bg,#222);color:var(--ui-text,#ccc);border:1px solid var(--ui-card-border,#444);padding:2px 4px;width:100%;margin-bottom:3px;box-sizing:border-box;" value="${currentRoute?.name ?? ''}">
                 <select id="sel-from-${v.id}" style="font-size:10px;background:var(--ui-input-bg,#222);color:var(--ui-text,#ccc);border:1px solid var(--ui-card-border,#444);padding:2px;width:100%;margin-bottom:2px;">${hubOpts}</select>
                 <select id="sel-to-${v.id}"   style="font-size:10px;background:var(--ui-input-bg,#222);color:var(--ui-text,#ccc);border:1px solid var(--ui-card-border,#444);padding:2px;width:100%;margin-bottom:3px;">${hubOpts}</select>
                 <button data-assign="${v.id}" style="width:100%;padding:3px;font-size:10px;font-family:monospace;cursor:pointer;background:#002244;color:#8cf;border:1px solid #36a;border-radius:2px;">▶ Assign Route</button>
-              </div>` : `<div style="color:#555;font-size:10px;margin-top:3px;">⚠ Place 2+ stations first</div>`}
+              </div>` : `<div style="color:#555;font-size:10px;margin-top:3px;">⚠ Build 2 compatible hubs first</div>`}
           </div>`;
       }
     } else {
@@ -843,6 +1072,7 @@ export class UIManager {
           basic:   (id, p) => createVehicle(id, p),
           cargo:   (id, p) => createCargoTruck(id, p),
           heavy:   (id, p) => createHeavyHauler(id, p),
+          bus:     (id, p) => createBus(id, p),
           freight: (id, p) => createLocomotive(id, p),
           express: (id, p) => createExpressTrain(id, p),
           light:   (id, p) => createPlane(id, p),
@@ -853,7 +1083,7 @@ export class UIManager {
           tanker:  (id, p) => createSupertanker(id, p),
         };
         const costMap: Record<string, number> = {
-          basic: truckCost, cargo: cargoTruckCost, heavy: heavyHaulerCost,
+          basic: truckCost, cargo: cargoTruckCost, heavy: heavyHaulerCost, bus: busCost,
           freight: locoCost, express: exprTrainCost,
           light: PLANE_COST, cargopl: CARGO_PLANE_COST, jumbo: JUMBO_JET_COST,
           barge: SHIP_COST, cargoship: CARGO_SHIP_COST, tanker: SUPERTANKER_COST,
@@ -880,6 +1110,12 @@ export class UIManager {
         if (fromId === toId) { alert('Pick-up and delivery stops must be different!'); return; }
         const vehicle = state.vehicles.find((v) => v.id === vid);
         if (!vehicle) return;
+        const fromHub = state.buildings.find((b) => b.id === fromId);
+        const toHub = state.buildings.find((b) => b.id === toId);
+        if (!fromHub || !toHub || !canVehicleUseHub(vehicle.vehicleType, fromHub) || !canVehicleUseHub(vehicle.vehicleType, toHub)) {
+          alert('That vehicle cannot use one of the selected hubs.');
+          return;
+        }
         const routeId = generateId(state);
         const route = createRoute(routeId, [
           { stationId: fromId, action: 'load' },
@@ -1031,7 +1267,7 @@ export class UIManager {
         html += `<div style="color:#6af;margin-top:4px;font-weight:bold;">✈ Airport #${building.id}</div>`;
         html += `<div>Cargo: ${(building as { cargo: { amount: number; capacity: number; type: string } }).cargo.amount}/${(building as { cargo: { amount: number; capacity: number; type: string } }).cargo.capacity}</div>`;
         html += `<div style="color:var(--ui-text-muted,#888);">Linked: ${linked ? `${industryLabel(linked.type)} — ${linked.name}` : 'none'}</div>`;
-        html += `<div style="color:#7ae;font-size:11px;">✈ Planes fly directly — no roads needed</div>`;
+        html += `<div style="color:#7ae;font-size:11px;">✈ Planes use airports only. Buses/trains can feed passengers or cargo into airport storage.</div>`;
       } else if (building.type === BuildingType.Seaport) {
         const linked = (building as { linkedIndustryId: number | null }).linkedIndustryId != null
           ? state.industries.find((i) => i.id === (building as { linkedIndustryId: number | null }).linkedIndustryId)
@@ -1039,7 +1275,7 @@ export class UIManager {
         html += `<div style="color:#4de;margin-top:4px;font-weight:bold;">⚓ Seaport #${building.id}</div>`;
         html += `<div>Cargo: ${(building as { cargo: { amount: number; capacity: number; type: string } }).cargo.amount}/${(building as { cargo: { amount: number; capacity: number; type: string } }).cargo.capacity}</div>`;
         html += `<div style="color:var(--ui-text-muted,#888);">Linked: ${linked ? `${industryLabel(linked.type)} — ${linked.name}` : 'none'}</div>`;
-        html += `<div style="color:#4de;font-size:11px;">⛵ Ships carry 80 units via water tiles</div>`;
+        html += `<div style="color:#4de;font-size:11px;">⛵ Ships use seaports only. Buses/trains can feed seaport storage from the city.</div>`;
       } else {
         html += `<div style="color:#da3;margin-top:4px;font-weight:bold;">🏗️ Depot #${building.id}</div>`;
         const here = state.vehicles.filter(
@@ -1060,8 +1296,9 @@ export class UIManager {
       const isLoco  = v.vehicleType === 'locomotive';
       const isPlane = v.vehicleType === 'plane';
       const isShip  = v.vehicleType === 'ship';
-      const vIcon  = isLoco ? '🚂' : isPlane ? '✈' : isShip ? '⛵' : '🚛';
-      const vLabel = isLoco ? 'Loco' : isPlane ? 'Plane' : isShip ? 'Ship' : 'Truck';
+      const isBus   = v.model === VehicleModel.Bus;
+      const vIcon  = isBus ? '🚌' : isLoco ? '🚂' : isPlane ? '✈' : isShip ? '⛵' : '🚛';
+      const vLabel = isBus ? 'Bus' : isLoco ? 'Loco' : isPlane ? 'Plane' : isShip ? 'Ship' : 'Truck';
       html += `<div style="color:#fd0;margin-top:4px;">${vIcon} ${vLabel} #${v.id}</div>`;
       html += `<div style="color:var(--ui-text-muted,#aaa);">State: ${v.state}</div>`;
       html += `<div>Cargo: ${v.cargoAmount}/${v.cargoCapacity} ${v.cargo ?? ''}</div>`;
@@ -1360,39 +1597,39 @@ export class UIManager {
     this.panelEl.innerHTML = `
       <div style="color:var(--ui-text,#fff);font-size:15px;font-weight:bold;margin-bottom:8px;">❓ How to Play</div>
       <div style="color:var(--ui-text,#ccc);font-size:11px;line-height:1.75;">
+        <b style="color:var(--ui-warning,#fc0);">Start Here</b><br>
+        Build roads, place stations beside producers and consumers, add a depot, buy a vehicle, then assign a load stop and an unload stop. Stations, airports, and seaports all auto-link to the nearest industry within 3 tiles, so placement matters.<br><br>
 
-        <b style="color:var(--ui-warning,#fc0);">🛤️ 1. Build Roads</b><br>
-        Select the Road tool (key 2) and drag-draw roads across the map. Roads cost $250 per tile.
-        Roads must connect your stations.<br><br>
+        <b style="color:var(--ui-warning,#fc0);">Infrastructure</b><br>
+        🛤️ <b>Road</b>: cheap land connection for trucks. Drag to paint lines quickly.<br>
+        🏪 <b>Station</b>: universal cargo hub. It stores output from its linked industry and hands it to vehicles.<br>
+        🏗️ <b>Truck Depot</b>: buys road vehicles, including buses. Put it on or near your road grid.<br>
+        🚂 <b>Rail</b>: unlocked later. Expensive to build and maintain, but strong for long distance routes.<br>
+        🏭 <b>Train Yard</b>: buys locomotives and express trains. Place it on rail.<br>
+        🌉 <b>Bridge</b>: turns a water tile into road once Bridging is unlocked.<br>
+        ⛏️ <b>Tunnel</b>: turns a mountain tile into road once Tunneling is unlocked.<br>
+        ✈ <b>Airport</b>: air hub for planes only. Airports do <b>not</b> need roads for planes to travel between them. They keep a local cargo/passenger buffer, so buses and trains can drop people or goods there for onward flights.<br>
+        ⚓ <b>Seaport</b>: water hub for ships only. A seaport must touch water when placed. It also has a local buffer, so buses and trains can drop passengers or freight there for ships.<br><br>
 
-        <b style="color:var(--ui-warning,#fc0);">🏪 2. Place Stations</b><br>
-        Place stations (key 3) next to industries. Stations auto-link to the nearest industry within 3 tiles and store its cargo.<br><br>
+        <b style="color:var(--ui-warning,#fc0);">Vehicles</b><br>
+        🚚 <b>Basic Truck</b>: balanced early-game hauler for short chains.<br>
+        🚛 <b>Cargo Truck</b>: more capacity, same general role, better once routes are profitable.<br>
+        🚜 <b>Heavy Hauler</b>: slow but useful for dense industrial chains.<br>
+        🚌 <b>City Bus</b>: passengers only. Use it to move people from passenger terminals to airports, seaports, or rail hubs.<br>
+        🚂 <b>Freight Train</b>: high-capacity long-range mover once you can afford the rail network.<br>
+        🚄 <b>Express Train</b>: faster rail option with lower capacity.<br>
+        ✈ <b>Light Aircraft</b>, 🛩 <b>Cargo Plane</b>, 🛫 <b>Jumbo Jet</b>: airport-to-airport only. No road required between airports. They load from airport storage and unload into another airport's storage.<br>
+        ⛵ <b>River Barge</b>, 🚢 <b>Cargo Ship</b>, 🛳️ <b>Supertanker</b>: seaport-to-seaport only. They need continuous water between ports and also use seaport storage.<br>
+        Human passengers can only travel by <b>bus, train, ship, or plane</b>. Trucks cannot carry passengers.<br><br>
 
-        <b style="color:var(--ui-warning,#fc0);">🏗️ 3. Build a Depot</b><br>
-        Place a depot (key 4) somewhere on a road. Depots let you buy and manage vehicles.<br><br>
+        <b style="color:var(--ui-warning,#fc0);">Terrain And Cities</b><br>
+        Some locked cities sit behind rough terrain. Mountain cities are wrapped in irregular ridges, so tunnels, rail, or longer road detours matter. Island cities are fully surrounded by water, so they naturally push you toward ships, airports, or expensive bridge chains.<br><br>
 
-        <b style="color:var(--ui-warning,#fc0);">🚛 4. Buy a Truck</b><br>
-        Click a depot or use the "Manage Depot" button. Buy a Truck ($15k), then assign a route — pick a pickup station and a delivery station. The truck will run the route automatically.<br><br>
+        <b style="color:var(--ui-warning,#fc0);">Economy</b><br>
+        Every <b>${MAINTENANCE_INTERVAL} ticks</b>, you pay upkeep for roads, rail, buildings, and vehicles. The 🔧 HUD value shows the next bill. Expand in stages so maintenance never outruns your delivery income.<br><br>
 
-        <b style="color:var(--ui-warning,#fc0);">💰 5. Earn Money &amp; Research</b><br>
-        Each delivery earns cash. Open the Tech panel (T) to unlock upgrades: faster trucks, larger stations, rail, and more.<br><br>
-
-        <b style="color:var(--ui-warning,#fc0);">🔧 6. Maintenance Costs</b><br>
-        Every <b>${MAINTENANCE_INTERVAL} ticks</b>, a maintenance bill is charged automatically based on your infrastructure:<br>
-        • Roads: $8/tile · Rail: $20/tile<br>
-        • Trucks: $400–$880 each · Locos: $1,600–$2,400<br>
-        • Planes: $2,400–$6,000 · Ships: $1,200–$3,600<br>
-        • Stations: $150 · Depots: $200 · Airports: $800–$2,000<br>
-        The 🔧 counter in the HUD shows your next bill. Keep your network profitable or it will drain you!<br><br>
-
-        <b style="color:var(--ui-warning,#fc0);">🚂 7. Build Rail (Advanced)</b><br>
-        Unlock the <em>Railway</em> tech to lay rail tiles (key 6, $600/tile) and buy Locomotives ($50k, 60 capacity). Rail lets you build fast cross-map routes. <b>Rail maintenance is 2.5× road costs</b> — make sure routes are profitable.<br><br>
-
-        <b style="color:var(--ui-text-muted,#aaa);">⌨️ Shortcuts</b><br>
-        1–6 = tools &nbsp;|&nbsp; T = tech &nbsp;|&nbsp; O = goals<br>
-        S = save &nbsp;|&nbsp; N = new game &nbsp;|&nbsp; ? = this panel<br>
-        Space = pause/unpause &nbsp;|&nbsp; Esc = close panel<br>
-        Shift+drag = pan &nbsp;|&nbsp; Scroll = zoom
+        <b style="color:var(--ui-warning,#fc0);">Controls</b><br>
+        1-0 select main tools, T tech, O goals, M finance, N new game, ? help, Space pause, Esc close panel, Save via button, Shift+drag or right-drag pan, Scroll zoom.
       </div>
       <button id="help-close" style="width:100%;margin-top:10px;padding:5px;font-size:11px;font-family:monospace;cursor:pointer;background:var(--ui-btn-bg,#1a1a1a);color:var(--ui-text-muted,#777);border:1px solid var(--ui-btn-border,#333);border-radius:3px;">Close</button>
     `;

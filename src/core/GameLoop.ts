@@ -2,7 +2,7 @@ import type { GameState } from './types.ts';
 import { SimSpeed, BuildingType, VehicleModel } from './types.ts';
 import { TICK_DURATION_NORMAL, TICK_DURATION_FAST, TICK_DURATION_DEVMODE, MAINTENANCE_INTERVAL,
   ROAD_MAINTENANCE_PER_TILE, RAIL_MAINTENANCE_PER_TILE,
-  TRUCK_MAINTENANCE, CARGO_TRUCK_MAINTENANCE_MULT, HEAVY_HAULER_MAINTENANCE_MULT,
+  TRUCK_MAINTENANCE, CARGO_TRUCK_MAINTENANCE_MULT, HEAVY_HAULER_MAINTENANCE_MULT, BUS_MAINTENANCE,
   LOCO_MAINTENANCE, EXPRESS_TRAIN_MAINTENANCE_MULT,
   PLANE_MAINTENANCE, CARGO_PLANE_MAINTENANCE_MULT, JUMBO_JET_MAINTENANCE_MULT,
   SHIP_MAINTENANCE, CARGO_SHIP_MAINTENANCE_MULT, SUPERTANKER_MAINTENANCE_MULT,
@@ -61,6 +61,7 @@ export function calcMaintenanceBill(state: GameState): number {
       case VehicleModel.BasicTruck:   cost += TRUCK_MAINTENANCE; break;
       case VehicleModel.CargoTruck:   cost += Math.round(TRUCK_MAINTENANCE * CARGO_TRUCK_MAINTENANCE_MULT); break;
       case VehicleModel.HeavyHauler:  cost += Math.round(TRUCK_MAINTENANCE * HEAVY_HAULER_MAINTENANCE_MULT); break;
+      case VehicleModel.Bus:          cost += BUS_MAINTENANCE; break;
       case VehicleModel.FreightTrain: cost += LOCO_MAINTENANCE; break;
       case VehicleModel.ExpressTrain: cost += Math.round(LOCO_MAINTENANCE * EXPRESS_TRAIN_MAINTENANCE_MULT); break;
       case VehicleModel.LightAircraft:cost += PLANE_MAINTENANCE; break;
