@@ -1,4 +1,4 @@
-import type { GameState, UIState } from './core/types.ts';
+import type { DevLogCategory, GameState, UIState } from './core/types.ts';
 import { SimSpeed, ToolType } from './core/types.ts';
 import { createInitialGameState } from './core/GameState.ts';
 import type { NewGameOptions } from './core/GameState.ts';
@@ -28,9 +28,11 @@ export class Game {
   private lastTime = 0;
   private accumulator = 0;
   private pressedKeys = new Set<string>();
+  private devMode = false;
 
   constructor(canvas: HTMLCanvasElement, uiContainer: HTMLElement, devMode = false, preloadedState?: GameState) {
     this.canvas = canvas;
+    this.devMode = devMode;
     migrateLegacySave();
     this.state = preloadedState ?? createInitialGameState({ devMode });
     this.uiState = createUIState();
@@ -48,7 +50,7 @@ export class Game {
 
     this.uiManager = new UIManager(uiContainer, (speed: SimSpeed) => {
       this.state.time.speed = speed;
-    });
+    }, devMode);
 
     this.uiManager.setToolChangeHandler((tool: ToolType) => {
       this.uiState.activeTool = tool;
@@ -57,29 +59,65 @@ export class Game {
     this.uiManager.setNewGameHandler((opts: NewGameOptions) => {
       this.state = createInitialGameState({ ...opts, devMode });
       this.accumulator = 0;
+      const devConfig = this.uiState.devTools.config;
       this.uiState = createUIState();
+      this.uiState.devTools.config = devConfig;
       this.inputHandler.setUIState(this.uiState);
       this.centerOnFirstCity();
+      this.addDevLog('system', `Started new ${opts.mapSize ?? 'normal'} game on seed ${this.state.seed}`);
     });
 
     this.uiManager.setLoadSaveHandler((loaded: GameState) => {
       this.state = loaded;
       this.accumulator = 0;
+      const devConfig = this.uiState.devTools.config;
       this.uiState = createUIState();
+      this.uiState.devTools.config = devConfig;
       this.inputHandler.setUIState(this.uiState);
       this.centerOnFirstCity();
+      this.addDevLog('system', `Loaded save for seed ${loaded.seed}`);
     });
 
     this.uiManager.setUnlockTechHandler((id: string) => {
       const success = unlockTech(this.state, id as TechId);
       if (success) {
         const node = this.state.tech.find((t) => t.id === id);
-        if (node) this.addToast(`🔬 Unlocked: ${node.name}`);
+        if (node) {
+          this.addToast(`🔬 Unlocked: ${node.name}`);
+          this.addDevLog('tech', `Unlocked ${node.name}`);
+        }
+      }
+    });
+
+    this.uiManager.setDevCommandHandler((command) => {
+      switch (command) {
+        case 'step_1':
+          this.runSimSteps(1);
+          break;
+        case 'step_10':
+          this.runSimSteps(10);
+          break;
+        case 'toggle_pause':
+          this.state.time.speed = this.state.time.speed === SimSpeed.Paused ? SimSpeed.Normal : SimSpeed.Paused;
+          this.addDevLog('system', `Simulation ${this.state.time.speed === SimSpeed.Paused ? 'paused' : 'resumed'}`);
+          break;
+        case 'clear_logs':
+          this.uiState.devTools.logs = [];
+          break;
+        case 'grant_cash':
+          this.state.economy.money += 50_000;
+          this.addDevLog('economy', 'Granted $50,000 test cash');
+          break;
+        case 'unlock_all':
+          for (const tech of this.state.tech) tech.unlocked = true;
+          this.addDevLog('tech', 'Unlocked all technologies for testing');
+          break;
       }
     });
 
     this.handleResize();
     window.addEventListener('resize', () => this.handleResize());
+    if (devMode) this.addDevLog('system', `Dev mode active on seed ${this.state.seed}`);
   }
 
   private _preSpeedBeforePause: SimSpeed | null = null;
@@ -143,16 +181,7 @@ export class Game {
           this.accumulator = tickDuration * 5;
         }
         while (this.accumulator >= tickDuration) {
-          const completed = simulationTick(this.state);
-          for (const id of completed) {
-            if (id.startsWith('__maintenance:')) {
-              const bill = parseInt(id.slice(14), 10);
-              this.addToast(`🔧 Maintenance: -$${bill.toLocaleString()}`);
-              continue;
-            }
-            const obj = this.state.objectives.find((o) => o.id === id);
-            if (obj) this.addToast(`🎯 Objective completed: ${obj.title} (+$${obj.reward.toLocaleString()})`);
-          }
+          this.runSimulationStep();
           this.accumulator -= tickDuration;
         }
       }
@@ -175,6 +204,75 @@ export class Game {
     this.uiState.toasts.push({ id, msg, ttl: 4000 });
     // Keep max 4 toasts
     if (this.uiState.toasts.length > 4) this.uiState.toasts.shift();
+  }
+
+  private runSimSteps(count: number): void {
+    for (let i = 0; i < count; i += 1) this.runSimulationStep();
+  }
+
+  private runSimulationStep(): void {
+    const tickBefore = this.state.time.tick;
+    const moneyBefore = this.state.economy.money;
+    const deliveriesBefore = this.state.economy.deliveriesCompleted;
+    const completed = simulationTick(this.state);
+
+    for (const id of completed) {
+      if (id.startsWith('__maintenance:')) {
+        const bill = parseInt(id.slice(14), 10);
+        this.addToast(`🔧 Maintenance: -$${bill.toLocaleString()}`);
+        this.addDevLog('economy', `Maintenance paid -$${bill.toLocaleString()}`, tickBefore);
+        continue;
+      }
+      const obj = this.state.objectives.find((o) => o.id === id);
+      if (obj) {
+        this.addToast(`🎯 Objective completed: ${obj.title} (+$${obj.reward.toLocaleString()})`);
+        this.addDevLog('objective', `Completed "${obj.title}" (+$${obj.reward.toLocaleString()})`, tickBefore);
+      }
+    }
+
+    this.captureDevTickLogs(tickBefore, moneyBefore, deliveriesBefore);
+  }
+
+  private captureDevTickLogs(tick: number, moneyBefore: number, deliveriesBefore: number): void {
+    if (!this.devMode) return;
+    const config = this.uiState.devTools.config;
+    if (config.captureTicks) {
+      this.addDevLog(
+        'tick',
+        `Tick ${tick} | $${this.state.economy.money.toLocaleString()} | deliveries ${this.state.economy.deliveriesCompleted} | routes ${this.state.routes.length} | vehicles ${this.state.vehicles.length}`,
+        tick,
+      );
+    }
+    if (config.captureEconomy) {
+      const tickTxns = this.state.economy.transactions.filter((txn) => txn.tick === tick);
+      for (const txn of tickTxns) {
+        this.addDevLog('economy', `${txn.label}: ${txn.delta >= 0 ? '+' : ''}$${txn.delta.toLocaleString()}`, tick);
+      }
+      if (tickTxns.length === 0 && this.state.economy.money !== moneyBefore) {
+        const delta = this.state.economy.money - moneyBefore;
+        this.addDevLog('economy', `Cash changed ${delta >= 0 ? '+' : ''}$${delta.toLocaleString()}`, tick);
+      }
+    }
+    if (config.captureObjectives && this.state.economy.deliveriesCompleted !== deliveriesBefore) {
+      this.addDevLog('objective', `Deliveries advanced to ${this.state.economy.deliveriesCompleted}`, tick);
+    }
+    if (config.captureVehicles && tick % Math.max(1, config.vehicleInterval) === 0) {
+      for (const vehicle of this.state.vehicles) {
+        this.addDevLog(
+          'vehicle',
+          `Vehicle #${vehicle.id} ${vehicle.model} ${vehicle.state} cargo:${vehicle.cargo ?? 'none'}(${vehicle.cargoAmount}) route:${vehicle.routeId ?? 'none'}`,
+          tick,
+        );
+      }
+    }
+  }
+
+  private addDevLog(category: DevLogCategory, message: string, tick = this.state.time.tick): void {
+    if (!this.devMode) return;
+    const logs = this.uiState.devTools.logs;
+    logs.push({ id: Date.now() + Math.random(), tick, category, message });
+    const maxEntries = Math.max(100, this.uiState.devTools.config.maxEntries);
+    while (logs.length > maxEntries) logs.shift();
   }
 
   private updateKeyboardCamera(dt: number): void {

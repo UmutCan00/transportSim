@@ -20,6 +20,7 @@ function makeVehicle(id: number, position: Vec2, vehicleType: VehicleType, model
     id,
     vehicleType,
     model,
+    depotId: null,
     position: { ...position },
     path: [],
     pathIndex: 0,
@@ -32,6 +33,44 @@ function makeVehicle(id: number, position: Vec2, vehicleType: VehicleType, model
     currentOrderIndex: 0,
     state: VehicleState.Idle,
   };
+}
+
+export function getVehicleBaseSpeed(model: VehicleModel): number {
+  switch (model) {
+    case VehicleModel.CargoTruck: return CARGO_TRUCK_SPEED;
+    case VehicleModel.HeavyHauler: return HEAVY_HAULER_SPEED;
+    case VehicleModel.Bus: return BUS_SPEED;
+    case VehicleModel.ExpressTrain: return EXPRESS_TRAIN_SPEED;
+    case VehicleModel.CargoPlane: return CARGO_PLANE_SPEED;
+    case VehicleModel.JumboJet: return JUMBO_SPEED;
+    case VehicleModel.CargoShip: return CARGO_SHIP_SPEED;
+    case VehicleModel.Supertanker: return SUPERTANKER_SPEED;
+    case VehicleModel.FreightTrain: return LOCOMOTIVE_SPEED;
+    case VehicleModel.LightAircraft: return PLANE_SPEED;
+    case VehicleModel.RiverBarge: return SHIP_SPEED;
+    case VehicleModel.BasicTruck:
+    default:
+      return TRUCK_SPEED;
+  }
+}
+
+export function getVehicleBaseCapacity(model: VehicleModel): number {
+  switch (model) {
+    case VehicleModel.CargoTruck: return CARGO_TRUCK_CAPACITY;
+    case VehicleModel.HeavyHauler: return HEAVY_HAULER_CAPACITY;
+    case VehicleModel.Bus: return BUS_CAPACITY;
+    case VehicleModel.ExpressTrain: return EXPRESS_TRAIN_CAPACITY;
+    case VehicleModel.CargoPlane: return CARGO_PLANE_CAPACITY;
+    case VehicleModel.JumboJet: return JUMBO_CAPACITY;
+    case VehicleModel.CargoShip: return CARGO_SHIP_CAPACITY;
+    case VehicleModel.Supertanker: return SUPERTANKER_CAPACITY;
+    case VehicleModel.FreightTrain: return LOCOMOTIVE_CAPACITY;
+    case VehicleModel.LightAircraft: return PLANE_CAPACITY;
+    case VehicleModel.RiverBarge: return SHIP_CAPACITY;
+    case VehicleModel.BasicTruck:
+    default:
+      return TRUCK_CAPACITY;
+  }
 }
 
 // ── Trucks ────────────────────────────────────────────────

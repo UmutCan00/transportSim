@@ -5,7 +5,7 @@ import { generateMap } from './MapGen.ts';
 import { randomSeed } from './Random.ts';
 import { createTechTree } from './TechTree.ts';
 import { createObjectives } from './Objectives.ts';
-import { MAP_SIZES, DEV_START_MONEY, DIFFICULTY_START_MONEY_MULT } from '../constants.ts';
+import { MAP_SIZES, DIFFICULTY_START_MONEY_MULT } from '../constants.ts';
 
 export interface NewGameOptions {
   seed?: number;
@@ -22,18 +22,12 @@ export function createInitialGameState(opts?: NewGameOptions): GameState {
   const difficulty: Difficulty = opts?.difficulty ?? 'normal';
   const theme: Theme = opts?.theme ?? 'dark';
   const { startMoney } = MAP_SIZES[mapSize];
-  const adjustedMoney = devMode
-    ? DEV_START_MONEY
-    : Math.round(startMoney * DIFFICULTY_START_MONEY_MULT[difficulty]);
+  const adjustedMoney = Math.round(startMoney * DIFFICULTY_START_MONEY_MULT[difficulty]);
   const { map, industries, nextId } = generateMap(actualSeed, mapSize);
   const economy = createEconomy();
   economy.money = adjustedMoney;
 
   const techTree = createTechTree();
-  // Dev mode: pre-unlock all techs for instant testing
-  if (devMode) {
-    for (const tech of techTree) tech.unlocked = true;
-  }
 
   return {
     seed: actualSeed,
@@ -44,7 +38,7 @@ export function createInitialGameState(opts?: NewGameOptions): GameState {
     vehicles: [],
     routes: [],
     economy,
-    time: { tick: 0, speed: devMode ? SimSpeed.Dev : SimSpeed.Normal },
+    time: { tick: 0, speed: SimSpeed.Normal },
     nextId,
     tech: techTree,
     objectives: createObjectives(),

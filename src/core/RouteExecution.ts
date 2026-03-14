@@ -4,14 +4,16 @@ import { findPath, findFlightPath, findWaterPath } from './Pathfinding.ts';
 import { deliverCargoToIndustry, takeCargoFromIndustry } from './Industry.ts';
 import { isTransitHub } from './Building.ts';
 import { earn, recordTransaction } from './Economy.ts';
-import { canVehicleCarryCargo } from './Vehicle.ts';
-import { DELIVERY_REWARDS, TRUCK_CAPACITY, TRUCK_SPEED,
-  LOCOMOTIVE_SPEED, LOCOMOTIVE_CAPACITY,
-  PLANE_SPEED, PLANE_CAPACITY, SHIP_SPEED, SHIP_CAPACITY,
+import { canVehicleCarryCargo, getVehicleBaseCapacity, getVehicleBaseSpeed } from './Vehicle.ts';
+import { DELIVERY_REWARDS,
   STATION_CARGO_CAPACITY } from '../constants.ts';
 import {
   getTruckSpeedMult,
   getTruckCapacityMult,
+  getLocomotiveSpeedMult,
+  getLocomotiveCapacityMult,
+  getPlaneSpeedMult,
+  getPlaneCapacityMult,
   getStationCapacityMult,
   getDeliveryRewardMult,
   getCargoDeliveryBonus,
@@ -23,8 +25,9 @@ import {
  * Must be called AFTER tickVehicleMovement so Moving→Idle transitions are already resolved.
  */
 export function tickRoutes(state: GameState): void {
-  tickStationSupply(state);
   tickStationDemand(state);
+  tickHubTransfer(state);
+  tickStationSupply(state);
   for (const vehicle of state.vehicles) {
     advanceVehicleRoute(vehicle, state);
   }
@@ -36,12 +39,14 @@ function tickStationSupply(state: GameState): void {
   for (const building of state.buildings) {
     if (!isTransitHub(building)) continue;
     const station = building as Station; // Airport/Seaport share the same shape
+    const laneCapacity = Math.floor((STATION_CARGO_CAPACITY * capMult) / 2);
+    station.cargo.capacity = Math.max(station.cargo.capacity, laneCapacity);
+    station.incomingCargo.capacity = Math.max(station.incomingCargo.capacity, laneCapacity);
     if (station.linkedIndustryId === null) continue;
     const industry = state.industries.find((i) => i.id === station.linkedIndustryId);
     if (!industry || industry.produces === null) continue;
     if (station.cargo.amount > 0 && station.cargo.type !== industry.produces) continue;
     station.cargo.type = industry.produces;
-    station.cargo.capacity = Math.max(station.cargo.capacity, STATION_CARGO_CAPACITY * capMult);
     const space = station.cargo.capacity - station.cargo.amount;
     if (space > 0 && industry.stock.amount > 0) {
       takeCargoFromIndustry(industry, station.cargo, space);
@@ -55,16 +60,41 @@ function tickStationDemand(state: GameState): void {
     if (!isTransitHub(building)) continue;
     if (building.type !== BuildingType.Station) continue;
     const station = building as Station;
-    if (station.linkedIndustryId === null || station.cargo.amount <= 0) continue;
+    if (station.linkedIndustryId === null || station.incomingCargo.amount <= 0) continue;
     const industry = state.industries.find((i) => i.id === station.linkedIndustryId);
-    if (!industry || industry.consumes !== station.cargo.type || industry.locked) continue;
-    const moved = deliverCargoToIndustry(industry, station.cargo.amount);
+    if (!industry || industry.consumes !== station.incomingCargo.type || industry.locked) continue;
+    const moved = deliverCargoToIndustry(industry, station.incomingCargo.amount);
     if (moved <= 0) continue;
-    station.cargo.amount -= moved;
-    if (station.cargo.amount <= 0) {
-      station.cargo.amount = 0;
+    station.incomingCargo.amount -= moved;
+    if (station.incomingCargo.amount <= 0) {
+      station.incomingCargo.amount = 0;
     }
-    awardDelivery(state, station.cargo.type, moved);
+    awardDelivery(state, station.incomingCargo.type, moved);
+  }
+}
+
+function tickHubTransfer(state: GameState): void {
+  for (const building of state.buildings) {
+    if (!isTransitHub(building)) continue;
+    const station = building as Station;
+    if (station.incomingCargo.amount <= 0) continue;
+
+    const linkedIndustry = station.linkedIndustryId != null
+      ? state.industries.find((i) => i.id === station.linkedIndustryId)
+      : null;
+    const consumedLocally = linkedIndustry &&
+      !linkedIndustry.locked &&
+      linkedIndustry.consumes === station.incomingCargo.type &&
+      building.type === BuildingType.Station;
+    if (consumedLocally) continue;
+
+    if (station.cargo.amount > 0 && station.cargo.type !== station.incomingCargo.type) continue;
+    const moved = Math.min(station.incomingCargo.amount, station.cargo.capacity - station.cargo.amount);
+    if (moved <= 0) continue;
+    station.cargo.type = station.incomingCargo.type;
+    station.cargo.amount += moved;
+    station.incomingCargo.amount -= moved;
+    if (station.incomingCargo.amount <= 0) station.incomingCargo.amount = 0;
   }
 }
 
@@ -116,13 +146,13 @@ function advanceVehicleRoute(vehicle: Vehicle, state: GameState): void {
   vehicle.path = path;
   vehicle.pathIndex = 0;
   vehicle.moveProgress = 0;
-  // Speed: trucks/locos scale with tech multiplier; planes/ships use fixed speed
-  const baseSpeed = vehicle.vehicleType === VehicleType.Locomotive ? LOCOMOTIVE_SPEED
-    : vehicle.vehicleType === VehicleType.Plane      ? PLANE_SPEED
-    : vehicle.vehicleType === VehicleType.Ship       ? SHIP_SPEED
-    : TRUCK_SPEED;
-  const roadVehicle = vehicle.vehicleType === VehicleType.Truck || vehicle.vehicleType === VehicleType.Locomotive;
-  vehicle.speed = baseSpeed * (roadVehicle ? getTruckSpeedMult(state) : 1);
+  // Speed scales by vehicle class so late-game tech branches actually matter in play.
+  const baseSpeed = getVehicleBaseSpeed(vehicle.model);
+  const speedMult = vehicle.vehicleType === VehicleType.Locomotive ? getLocomotiveSpeedMult(state)
+    : vehicle.vehicleType === VehicleType.Plane ? getPlaneSpeedMult(state)
+    : vehicle.vehicleType === VehicleType.Truck ? getTruckSpeedMult(state)
+    : 1;
+  vehicle.speed = baseSpeed * speedMult;
   vehicle.state = VehicleState.Moving;
 }
 
@@ -138,12 +168,12 @@ function executeStationAction(
     if (station.cargo.amount <= 0) return false; // Wait for cargo to accumulate
     if (!canVehicleCarryCargo(vehicle, station.cargo.type)) return false;
     // Capacity differs by vehicle type
-    const baseCapacity = vehicle.vehicleType === VehicleType.Locomotive ? LOCOMOTIVE_CAPACITY
-      : vehicle.vehicleType === VehicleType.Plane ? PLANE_CAPACITY
-      : vehicle.vehicleType === VehicleType.Ship  ? SHIP_CAPACITY
-      : TRUCK_CAPACITY;
-    const roadVehicle = vehicle.vehicleType === VehicleType.Truck || vehicle.vehicleType === VehicleType.Locomotive;
-    const vehicleCapacity = Math.floor(baseCapacity * (roadVehicle ? getTruckCapacityMult(state) : 1));
+    const baseCapacity = getVehicleBaseCapacity(vehicle.model);
+    const capacityMult = vehicle.vehicleType === VehicleType.Locomotive ? getLocomotiveCapacityMult(state)
+      : vehicle.vehicleType === VehicleType.Plane ? getPlaneCapacityMult(state)
+      : vehicle.vehicleType === VehicleType.Truck ? getTruckCapacityMult(state)
+      : 1;
+    const vehicleCapacity = Math.floor(baseCapacity * capacityMult);
     const space = vehicleCapacity - vehicle.cargoAmount;
     if (space <= 0) return false;
     const take = Math.min(station.cargo.amount, space);
@@ -162,13 +192,13 @@ function executeStationAction(
 
   const cargoType = vehicle.cargo!;
   if (!canVehicleCarryCargo(vehicle, cargoType)) return false;
-  if (station.cargo.amount > 0 && station.cargo.type !== cargoType) return false;
-  const space = station.cargo.capacity - station.cargo.amount;
+  if (station.incomingCargo.amount > 0 && station.incomingCargo.type !== cargoType) return false;
+  const space = station.incomingCargo.capacity - station.incomingCargo.amount;
   if (space <= 0) return false;
   const moved = Math.min(space, vehicle.cargoAmount);
   if (moved <= 0) return false;
-  station.cargo.type = cargoType;
-  station.cargo.amount += moved;
+  station.incomingCargo.type = cargoType;
+  station.incomingCargo.amount += moved;
   vehicle.cargoAmount -= moved;
   if (vehicle.cargoAmount <= 0) {
     vehicle.cargoAmount = 0;

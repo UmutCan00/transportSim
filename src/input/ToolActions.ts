@@ -1,5 +1,5 @@
-import type { GameState, UIState } from '../core/types.ts';
-import { ToolType, TileType, BuildingType } from '../core/types.ts';
+import type { Depot, GameState, UIState } from '../core/types.ts';
+import { ToolType, TileType, BuildingType, VehicleType } from '../core/types.ts';
 import { getTile, setTile, isBuildable, isInBounds } from '../core/World.ts';
 import {
   createStation, createDepot, createAirport, createSeaport,
@@ -10,6 +10,8 @@ import {
 } from '../core/Placement.ts';
 import { canAfford, spend } from '../core/Economy.ts';
 import { generateId } from '../core/GameState.ts';
+import { createVehicle } from '../core/Vehicle.ts';
+import { createRoute } from '../core/Route.ts';
 import {
   getRoadCostMult, isRailwayUnlocked, isBridgingUnlocked, isTunnelingUnlocked,
   isAviationUnlocked, isMaritimeUnlocked, isAdvancedAviationUnlocked, isDeepSeaUnlocked,
@@ -18,6 +20,7 @@ import {
   ROAD_COST, STATION_COST, DEPOT_COST, TRAIN_YARD_COST, DEMOLISH_REFUND_RATIO,
   RAIL_COST, BRIDGE_COST, TUNNEL_COST,
   AIRPORT_SMALL_COST, AIRPORT_LARGE_COST, SEAPORT_SMALL_COST, SEAPORT_LARGE_COST,
+  TRUCK_COST,
 } from '../constants.ts';
 
 /** Execute the active tool's action at a tile. Returns true if action was performed. */
@@ -70,6 +73,17 @@ function handleSelect(state: GameState, uiState: UIState, tx: number, ty: number
   }
   const building = state.buildings.find((b) => buildingOccupiesTile(b, tx, ty));
   if (building) {
+    if (isTruckRouteHub(building.type)) {
+      if (tryCreateQuickTruckRoute(state, uiState, building.id)) {
+        uiState.selectedEntityId = null;
+        uiState.selectedEntityType = null;
+        if (uiState.activePanel === 'depot') uiState.activePanel = 'none';
+        return true;
+      }
+      uiState.quickRouteStartStationId = building.id;
+    } else {
+      uiState.quickRouteStartStationId = null;
+    }
     uiState.selectedEntityId = building.id;
     uiState.selectedEntityType = 'building';
     if (building.type === BuildingType.Depot || building.type === BuildingType.TrainYard ||
@@ -91,8 +105,75 @@ function handleSelect(state: GameState, uiState: UIState, tx: number, ty: number
   }
   uiState.selectedEntityId = null;
   uiState.selectedEntityType = null;
+  uiState.quickRouteStartStationId = null;
   if (uiState.activePanel === 'depot') uiState.activePanel = 'none';
   return false;
+}
+
+function isTruckRouteHub(type: BuildingType): boolean {
+  return type === BuildingType.Station || type === BuildingType.Airport || type === BuildingType.Seaport;
+}
+
+function tryCreateQuickTruckRoute(state: GameState, uiState: UIState, targetStationId: number): boolean {
+  const startStationId = uiState.quickRouteStartStationId;
+  if (startStationId == null || startStationId === targetStationId) return false;
+  const from = state.buildings.find((b) => b.id === startStationId);
+  const to = state.buildings.find((b) => b.id === targetStationId);
+  if (!from || !to || !isTruckRouteHub(from.type) || !isTruckRouteHub(to.type)) return false;
+
+  const depots = state.buildings.filter((b): b is Depot => b.type === BuildingType.Depot);
+  if (depots.length === 0) return false;
+  const nearestDepot = depots
+    .map((depot) => ({
+      depot,
+      distance:
+        Math.abs(depot.position.x - from.position.x) +
+        Math.abs(depot.position.y - from.position.y) +
+        Math.abs(depot.position.x - to.position.x) +
+        Math.abs(depot.position.y - to.position.y),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0]?.depot;
+  if (!nearestDepot) return false;
+  const roadDepot: Depot = nearestDepot;
+
+  const depotFleet = state.vehicles.filter((v) => v.depotId === roadDepot.id);
+  const hasFreeSlot = depotFleet.length < roadDepot.maxVehicles;
+  const existingTruck = depotFleet.find((v) => v.vehicleType === VehicleType.Truck && v.routeId == null);
+  if (!existingTruck && (!hasFreeSlot || !canAfford(state.economy, TRUCK_COST))) return false;
+
+  const routeId = generateId(state);
+  const routeName = `${hubLabel(state, from.id)} -> ${hubLabel(state, to.id)}`;
+  state.routes.push(createRoute(routeId, [
+    { stationId: from.id, action: 'load' },
+    { stationId: to.id, action: 'unload' },
+  ], routeName));
+
+  if (existingTruck) {
+    existingTruck.routeId = routeId;
+    existingTruck.currentOrderIndex = 0;
+  } else {
+    spend(state.economy, TRUCK_COST);
+    const vehicle = createVehicle(generateId(state), { x: roadDepot.position.x, y: roadDepot.position.y });
+    vehicle.depotId = roadDepot.id;
+    vehicle.routeId = routeId;
+    vehicle.currentOrderIndex = 0;
+    state.vehicles.push(vehicle);
+  }
+
+  uiState.quickRouteStartStationId = null;
+  return true;
+}
+
+function hubLabel(state: GameState, buildingId: number): string {
+  const hub = state.buildings.find((b) => b.id === buildingId);
+  if (!hub || !isTruckRouteHub(hub.type)) return `Hub #${buildingId}`;
+  const stationLike = hub as Extract<typeof hub, { linkedIndustryId: number | null }>;
+  const linked = stationLike.linkedIndustryId != null
+    ? state.industries.find((i) => i.id === stationLike.linkedIndustryId)
+    : null;
+  if (linked) return linked.name;
+  if ('name' in stationLike && typeof stationLike.name === 'string') return stationLike.name;
+  return `Hub #${buildingId}`;
 }
 
 function handleBuildRoad(state: GameState, tx: number, ty: number): boolean {

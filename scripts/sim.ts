@@ -17,6 +17,9 @@ const baseSeed = parseInt(getArg('--seed', String(Math.floor(Math.random() * 999
 const ticks = parseInt(getArg('--ticks', hasFlag('--single') ? '3000' : '1500'), 10);
 const runs = parseInt(getArg('--runs', hasFlag('--single') ? '1' : '2'), 10);
 const profileFilter = getArg('--profile', hasFlag('--single') ? 'balanced' : 'all');
+const mapSize = getArg('--map-size', 'normal') as 'small' | 'normal' | 'large' | 'huge';
+const difficulty = getArg('--difficulty', 'normal') as 'easy' | 'normal' | 'hard' | 'brutal';
+const theme = getArg('--theme', 'dark') as 'classic' | 'dark' | 'neon' | 'anime' | 'retro';
 const verbose = hasFlag('--verbose');
 const singleMode = hasFlag('--single') || verbose;
 
@@ -34,6 +37,9 @@ if (singleMode) {
     ticks,
     verbose,
     profile: profiles[0]!,
+    mapSize,
+    difficulty,
+    theme,
   });
   printSingleRun(result);
   process.exit(0);
@@ -42,7 +48,7 @@ if (singleMode) {
 const results = [];
 for (const profile of profiles) {
   for (const seed of seedList) {
-    results.push(runSimulation({ seed, ticks, profile }));
+    results.push(runSimulation({ seed, ticks, profile, mapSize, difficulty, theme }));
   }
 }
 

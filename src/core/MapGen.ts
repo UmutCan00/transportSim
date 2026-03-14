@@ -60,54 +60,47 @@ function generateNoiseMap(rng: Random, width: number, height: number, scale: num
 // ── Connectivity ────────────────────────────────────────
 
 /**
- * BFS flood-fill from the map centre outward to find the largest connected
- * land mass.  Returns a Set of tile indices (y*width+x) on that component.
+ * Finds the largest connected non-water, non-mountain land mass.
+ * Returns a Set of tile indices (y*width+x) on that component.
  * This is used so industry placement is restricted to one connected island,
  * guaranteeing that road paths can always be built between all industries.
  */
 function buildMainLandSet(map: TileMap): Set<number> {
-  const { width, height, tiles } = map;
-  // Find the nearest non-water tile to the centre as the seed
-  const cx = Math.floor(width / 2);
-  const cy = Math.floor(height / 2);
-  let seedX = cx;
-  let seedY = cy;
-  outer:
-  for (let r = 0; r <= Math.max(width, height); r++) {
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-        if (tiles[ny * width + nx] !== TileType.Water) {
-          seedX = nx;
-          seedY = ny;
-          break outer;
-        }
+  const { width, tiles } = map;
+  const globallyVisited = new Set<number>();
+  const dirs = [-1, 1, -width, width]; // left, right, up, down
+  let largest = new Set<number>();
+
+  for (let idx = 0; idx < tiles.length; idx++) {
+    if (globallyVisited.has(idx)) continue;
+    if (tiles[idx] === TileType.Water || tiles[idx] === TileType.Mountain) continue;
+
+    const component = new Set<number>();
+    const queue: number[] = [idx];
+    globallyVisited.add(idx);
+    component.add(idx);
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const d of dirs) {
+        const ni = cur + d;
+        if (ni < 0 || ni >= tiles.length) continue;
+        if (globallyVisited.has(ni)) continue;
+        if (tiles[ni] === TileType.Water || tiles[ni] === TileType.Mountain) continue;
+        if (d === -1 && (cur % width) === 0) continue;
+        if (d === 1 && (cur % width) === width - 1) continue;
+        globallyVisited.add(ni);
+        component.add(ni);
+        queue.push(ni);
       }
+    }
+
+    if (component.size > largest.size) {
+      largest = component;
     }
   }
 
-  const visited = new Set<number>();
-  const queue: number[] = [seedY * width + seedX];
-  visited.add(seedY * width + seedX);
-  const dirs = [-1, 1, -width, width]; // left, right, up, down
-  while (queue.length > 0) {
-    const idx = queue.shift()!;
-    for (const d of dirs) {
-      const ni = idx + d;
-      if (ni < 0 || ni >= tiles.length) continue;
-      if (visited.has(ni)) continue;
-      // Mountains and water are both impassable for industry-placement connectivity
-      if (tiles[ni] === TileType.Water || tiles[ni] === TileType.Mountain) continue;
-      // Guard against wrapping at horizontal edges
-      if (d === -1 && (idx % width) === 0) continue;
-      if (d ===  1 && (idx % width) === width - 1) continue;
-      visited.add(ni);
-      queue.push(ni);
-    }
-  }
-  return visited;
+  return largest;
 }
 
 // ── Map Generation ──────────────────────────────────────
@@ -167,9 +160,24 @@ export function generateMap(
   const placed: Vec2[] = [];
 
   // ── Pick city center positions, well spread across the map ────────────────
-  const activeCenters = pickCityCenters(rng, map, mainLand, NUM_CITIES, MIN_CITY_SPACING);
+  const activeCenters = ensureCityCenters(
+    rng,
+    map,
+    mainLand,
+    pickCityCenters(rng, map, mainLand, NUM_CITIES, MIN_CITY_SPACING),
+    NUM_CITIES,
+    MIN_CITY_SPACING,
+  );
   const lockedCount = NUM_LOCKED_CITIES;
-  const lockedCenters = pickCityCenters(rng, map, mainLand, lockedCount, MIN_CITY_SPACING / 2, activeCenters);
+  const lockedCenters = ensureCityCenters(
+    rng,
+    map,
+    mainLand,
+    pickCityCenters(rng, map, mainLand, lockedCount, MIN_CITY_SPACING / 2, activeCenters),
+    lockedCount,
+    MIN_CITY_SPACING / 2,
+    activeCenters,
+  );
 
   // ── Spawn one full industry cluster per active city ───────────────────────
   for (let cityId = 0; cityId < activeCenters.length; cityId++) {
@@ -334,6 +342,7 @@ function findIndustrySpot(
       }
     }
     if (!valid) continue;
+    if (overlapsExistingIndustry({ x, y }, existing)) continue;
 
     // Check minimum distance from other industries
     const center = { x: x + INDUSTRY_SIZE / 2, y: y + INDUSTRY_SIZE / 2 };
@@ -380,6 +389,17 @@ function isIndustryFootprintValid(map: TileMap, pos: Vec2): boolean {
   return true;
 }
 
+function footprintsOverlap(a: Vec2, b: Vec2): boolean {
+  return a.x < b.x + INDUSTRY_SIZE &&
+    a.x + INDUSTRY_SIZE > b.x &&
+    a.y < b.y + INDUSTRY_SIZE &&
+    a.y + INDUSTRY_SIZE > b.y;
+}
+
+function overlapsExistingIndustry(pos: Vec2, existing: Vec2[]): boolean {
+  return existing.some((other) => footprintsOverlap(pos, other));
+}
+
 function sanitizeIndustryPlacements(
   rng: Random,
   map: TileMap,
@@ -391,7 +411,7 @@ function sanitizeIndustryPlacements(
   const occupied: Vec2[] = [];
   const sorted = [...industries].sort((a, b) => a.id - b.id);
   for (const ind of sorted) {
-    if (isIndustryFootprintValid(map, ind.position)) {
+    if (isIndustryFootprintValid(map, ind.position) && !overlapsExistingIndustry(ind.position, occupied)) {
       occupied.push(ind.position);
       continue;
     }
@@ -438,6 +458,7 @@ function findSpotNear(
       }
     }
     if (!valid) continue;
+    if (overlapsExistingIndustry({ x, y }, existing)) continue;
 
     const c2 = { x: x + INDUSTRY_SIZE / 2, y: y + INDUSTRY_SIZE / 2 };
     let tooClose = false;
@@ -495,6 +516,46 @@ function pickCityCenters(
       break;
     }
   }
+  return centers;
+}
+
+function ensureCityCenters(
+  rng: Random,
+  map: TileMap,
+  mainLand: Set<number>,
+  current: Vec2[],
+  targetCount: number,
+  minSpacing: number,
+  existing: Vec2[] = [],
+): Vec2[] {
+  const centers = [...current];
+  const used = [...existing, ...current];
+  let attempts = 0;
+
+  while (centers.length < targetCount && attempts < 4000) {
+    attempts += 1;
+    const spot = findIndustrySpot(rng, map, used, mainLand, 50);
+    if (!spot) break;
+    const center = { x: spot.x + 1, y: spot.y + 1 };
+    let tooClose = false;
+    for (const other of used) {
+      const dx = center.x - other.x;
+      const dy = center.y - other.y;
+      if (Math.sqrt(dx * dx + dy * dy) < minSpacing) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (tooClose) continue;
+    centers.push(center);
+    used.push(center);
+  }
+
+  if (centers.length === 0) {
+    const fallbackSpot = findIndustrySpot(rng, map, [], mainLand, 600);
+    if (fallbackSpot) centers.push({ x: fallbackSpot.x + 1, y: fallbackSpot.y + 1 });
+  }
+
   return centers;
 }
 

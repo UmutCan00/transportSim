@@ -99,6 +99,7 @@ function canVehicleUseHub(vehicleType: VehicleType, building: Building): boolean
 
 export class UIManager {
   private container: HTMLElement;
+  private isDevMode = false;
   private moneyEl!: HTMLElement;
   private tickEl!: HTMLElement;
   private speedEl!: HTMLElement;
@@ -116,6 +117,7 @@ export class UIManager {
   private onNewGame: ((opts: NewGameOptions) => void) | null = null;
   private onUnlockTech: ((id: string) => void) | null = null;
   private onLoadSave: ((state: GameState) => void) | null = null;
+  private onDevCommand: ((cmd: 'step_1' | 'step_10' | 'toggle_pause' | 'clear_logs' | 'grant_cash' | 'unlock_all') => void) | null = null;
 
   private _uiState: UIState | null = null;
   private _lastTechHash = '';
@@ -130,6 +132,7 @@ export class UIManager {
   private _toolInfoExpanded = false;
   private _toolInfoInteractive = false;
   private _lastToolInfoText = '';
+  private _lastDevToolsHash = '';
 
   // ── Theme definitions ──────────────────────────────────────────────
   private static readonly THEMES: Record<string, {
@@ -240,9 +243,10 @@ export class UIManager {
   }
 
 
-  constructor(container: HTMLElement, onSpeedChange: (speed: SimSpeed) => void) {
+  constructor(container: HTMLElement, onSpeedChange: (speed: SimSpeed) => void, isDevMode = false) {
     this.container = container;
     this.onSpeedChange = onSpeedChange;
+    this.isDevMode = isDevMode;
     this.buildDOM();
     this.bindKeyboard();
   }
@@ -274,6 +278,7 @@ export class UIManager {
           <button id="btn-tech"   style="margin-left:4px;">🔬 Tech</button>
           <button id="btn-save"   style="margin-left:4px;">💾 Save</button>
           <button id="btn-help"   style="margin-left:4px;">? Help</button>
+          ${this.isDevMode ? '<button id="btn-devtools" style="margin-left:4px;">🧪 Dev</button>' : ''}
           <button id="btn-newmap" style="margin-left:12px;">🗺️ New Game</button>
         </div>
       </div>
@@ -291,7 +296,7 @@ export class UIManager {
           padding:3px 10px;border:1px solid var(--ui-btn-border,#333);
           border-radius:10px;background:rgba(255,255,255,0.04);
           display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;
-          overflow:hidden;line-height:1.25em;max-width:560px;height:24px;
+          overflow:hidden;line-height:1.25em;max-width:420px;height:24px;
           cursor:pointer;box-sizing:border-box;
         ">Tool info</div>
       </div>
@@ -378,6 +383,7 @@ export class UIManager {
     document.getElementById('btn-obj')!.addEventListener('click',    () => this.togglePanel('objectives'));
     document.getElementById('btn-save')!.addEventListener('click',   () => this.togglePanel('save'));
     document.getElementById('btn-help')!.addEventListener('click',   () => this.togglePanel('help'));
+    document.getElementById('btn-devtools')?.addEventListener('click', () => this.togglePanel('devtools'));
     // Clicking the money counter opens the finance panel
     document.getElementById('hud-money')!.addEventListener('click', () => this.togglePanel('money'));
     this.toolInfoEl.addEventListener('click', () => {
@@ -416,12 +422,13 @@ export class UIManager {
     this.syncHudLayout();
   }
 
-  private togglePanel(which: 'tech' | 'objectives' | 'newgame' | 'help' | 'save' | 'money'): void {
+  private togglePanel(which: 'tech' | 'objectives' | 'newgame' | 'help' | 'save' | 'money' | 'devtools'): void {
     if (!this._uiState) return;
     if (this._uiState.activePanel === which) {
       this._uiState.activePanel = 'none';
       this.panelEl.style.display = 'none';
       this._lastTechHash = '';
+      this._lastDevToolsHash = '';
       this._lastInfoHash = ''; // let info panel rebuild after a panel closes
     } else {
       this._uiState.activePanel = which;
@@ -448,6 +455,7 @@ export class UIManager {
       if (e.key === '?')                   this.togglePanel('help');
       if (e.key === 'm' || e.key === 'M')  this.togglePanel('money');
       if (e.key === 'n' || e.key === 'N')  this.togglePanel('newgame');
+      if (this.isDevMode && (e.key === 'p' || e.key === 'P')) this.togglePanel('devtools');
       if (e.key === 'Escape') {
         if (this._uiState) this._uiState.activePanel = 'none';
         this.panelEl.style.display = 'none';
@@ -459,6 +467,7 @@ export class UIManager {
   setNewGameHandler(h: (opts: NewGameOptions) => void):     void { this.onNewGame     = h; }
   setUnlockTechHandler(h: (id: string) => void):            void { this.onUnlockTech  = h; }
   setLoadSaveHandler(h: (state: GameState) => void):        void { this.onLoadSave    = h; }
+  setDevCommandHandler(h: (cmd: 'step_1' | 'step_10' | 'toggle_pause' | 'clear_logs' | 'grant_cash' | 'unlock_all') => void): void { this.onDevCommand = h; }
   /** @deprecated kept for back-compat; prefer setNewGameHandler */
   setNewMapHandler(h: (seed?: number) => void): void { this.onNewGame = (opts) => h(opts.seed); }
 
@@ -559,6 +568,29 @@ export class UIManager {
       if (this._panelDirty) { this.renderHelpPanel(); this._panelDirty = false; }
     } else if (uiState.activePanel === 'money') {
       this.renderMoneyPanel(state); // live-updates each frame
+    } else if (uiState.activePanel === 'devtools') {
+      const cfg = uiState.devTools.config;
+      const devHash = [
+        state.time.tick,
+        state.time.speed,
+        state.economy.money,
+        state.economy.deliveriesCompleted,
+        state.routes.length,
+        state.vehicles.length,
+        uiState.devTools.logs.length,
+        cfg.captureTicks,
+        cfg.captureEconomy,
+        cfg.captureObjectives,
+        cfg.captureVehicles,
+        cfg.vehicleInterval,
+        cfg.maxEntries,
+        cfg.autoScroll,
+      ].join(':');
+      if (this._panelDirty || devHash !== this._lastDevToolsHash) {
+        this._lastDevToolsHash = devHash;
+        this.renderDevToolsPanel(state, uiState);
+        this._panelDirty = false;
+      }
     }
 
     this.updateInfoPanel(state, uiState);
@@ -581,7 +613,7 @@ export class UIManager {
     if (this._toolInfoExpanded) {
       this.toolInfoEl.style.display = '-webkit-box';
       this.toolInfoEl.style.overflow = 'hidden';
-      this.toolInfoEl.style.maxWidth = '560px';
+      this.toolInfoEl.style.maxWidth = '420px';
       this.toolInfoEl.style.height = '42px';
       this.toolInfoEl.style.lineHeight = '1.25em';
       this.toolInfoEl.style.borderRadius = '12px';
@@ -590,7 +622,7 @@ export class UIManager {
     } else {
       this.toolInfoEl.style.display = '-webkit-box';
       this.toolInfoEl.style.overflow = 'hidden';
-      this.toolInfoEl.style.maxWidth = '560px';
+      this.toolInfoEl.style.maxWidth = '420px';
       this.toolInfoEl.style.height = '24px';
       this.toolInfoEl.style.lineHeight = '1.25em';
       this.toolInfoEl.style.borderRadius = '999px';
@@ -872,11 +904,12 @@ export class UIManager {
     const isSeaport   = depot.type === BuildingType.Seaport;
     const d = depot as import('../core/types.ts').Depot;
     const maxV = d.maxVehicles ?? 8;
-    const depotVehicles = state.vehicles.filter((v) => {
-      // vehicles "belong" to a depot if they have no route yet
-      // In a fuller implementation we'd track depotId; here count all unassigned
-      return !v.routeId;
-    }).length;
+    const belongsToDepot = (v: import('../core/types.ts').Vehicle): boolean => {
+      if (v.depotId != null) return v.depotId === depot.id;
+      return Math.floor(v.position.x) === depot.position.x && Math.floor(v.position.y) === depot.position.y;
+    };
+    const depotFleet = state.vehicles.filter(belongsToDepot);
+    const depotVehicles = depotFleet.length;
 
     const costMult = getTruckCostMult(state);
     const truckCost = Math.floor(TRUCK_COST * costMult);
@@ -907,7 +940,7 @@ export class UIManager {
       ];
       html += `<div style="color:var(--ui-text-muted,#aaa);font-size:11px;margin-bottom:4px;">Buy Road Vehicles:</div>`;
       for (const r of rows) {
-        const ok = canAfford(state.economy, r.cost);
+        const ok = depotVehicles < maxV && canAfford(state.economy, r.cost);
         html += `<button data-buy="${r.factory}" style="
           width:100%;padding:6px 8px;margin-bottom:4px;
           font-family:monospace;font-size:11px;display:flex;align-items:center;gap:6px;
@@ -932,7 +965,7 @@ export class UIManager {
       ];
       html += `<div style="color:var(--ui-text-muted,#aaa);font-size:11px;margin-bottom:4px;">Buy Locomotives:</div>`;
       for (const r of railRows) {
-        const ok = r.unlocked && canAfford(state.economy, r.cost);
+        const ok = depotVehicles < maxV && r.unlocked && canAfford(state.economy, r.cost);
         html += `<button data-buy="${r.id}" style="
           width:100%;padding:6px 8px;margin-bottom:4px;
           font-family:monospace;font-size:11px;display:flex;align-items:center;gap:6px;
@@ -957,7 +990,7 @@ export class UIManager {
       ];
       html += `<div style="color:var(--ui-text-muted,#aaa);font-size:11px;margin-bottom:4px;">Buy Aircraft:</div>`;
       for (const r of planeRows) {
-        const ok = canAfford(state.economy, r.cost);
+        const ok = depotVehicles < maxV && canAfford(state.economy, r.cost);
         html += `<button data-buy="${r.id}" style="
           width:100%;padding:6px 8px;margin-bottom:4px;
           font-family:monospace;font-size:11px;display:flex;align-items:center;gap:6px;
@@ -982,7 +1015,7 @@ export class UIManager {
       ];
       html += `<div style="color:var(--ui-text-muted,#aaa);font-size:11px;margin-bottom:4px;">Buy Ships:</div>`;
       for (const r of shipRows) {
-        const ok = canAfford(state.economy, r.cost);
+        const ok = depotVehicles < maxV && canAfford(state.economy, r.cost);
         html += `<button data-buy="${r.id}" style="
           width:100%;padding:6px 8px;margin-bottom:4px;
           font-family:monospace;font-size:11px;display:flex;align-items:center;gap:6px;
@@ -1020,11 +1053,24 @@ export class UIManager {
     };
 
     // Vehicle fleet listing
-    const allVehicles = state.vehicles;
+    const allVehicles = depotFleet;
     if (allVehicles.length > 0) {
       html += `<div style="color:#fc0;margin:8px 0 4px;font-size:11px;">Fleet (${allVehicles.length} vehicle${allVehicles.length !== 1 ? 's' : ''}):</div>`;
       for (const v of allVehicles) {
         const currentRoute = v.routeId != null ? state.routes.find((r) => r.id === v.routeId) : null;
+        const routeStops = currentRoute
+          ? currentRoute.orders.map((order) => {
+              const stopBuilding = state.buildings.find((b) => b.id === order.stationId);
+              if (!stopBuilding) return `Hub #${order.stationId}`;
+              const stationLike = stopBuilding as Extract<typeof stopBuilding, { linkedIndustryId: number | null }>;
+              const linkedIndustry = stationLike.linkedIndustryId != null
+                ? state.industries.find((i) => i.id === stationLike.linkedIndustryId)
+                : null;
+              return linkedIndustry?.name ?? ('name' in stationLike && typeof stationLike.name === 'string'
+                ? stationLike.name
+                : `Hub #${order.stationId}`);
+            }).join(' -> ')
+          : '';
         const compatibleHubs = hubs.filter((hub) => canVehicleUseHub(v.vehicleType, hub));
         const hubOpts = compatibleHubs.map(hubOption).join('');
         const vIcon = v.model === VehicleModel.Bus ? '🚌' : v.vehicleType === 'locomotive' ? '🚂' : v.vehicleType === 'plane' ? '✈' : v.vehicleType === 'ship' ? '⛵' : '🚛';
@@ -1041,7 +1087,7 @@ export class UIManager {
             <div style="color:#fd0;font-weight:bold;">${vIcon} #${v.id} <span style="color:var(--ui-text-muted,#888);font-weight:normal;font-size:10px;">${v.state}</span></div>
             <div style="color:var(--ui-text-muted,#aaa);font-size:10px;">Cap: ${v.cargoAmount}/${v.cargoCapacity}</div>
             <div style="color:var(--ui-text-muted,#777);font-size:10px;">${routeHint}</div>
-            ${currentRoute ? `<div style="color:#4f4;font-size:10px;">✓ Route${routeName}</div>` : ''}
+            ${currentRoute ? `<div style="color:#4f4;font-size:10px;">✓ Route${routeName}</div><div style="color:var(--ui-text-muted,#9aa);font-size:10px;line-height:1.35;">${routeStops}</div>` : ''}
             ${compatibleHubs.length >= 2 ? `
               <div style="margin-top:4px;font-size:10px;">
                 <input id="rname-${v.id}" placeholder="Route name" style="font-size:10px;background:var(--ui-input-bg,#222);color:var(--ui-text,#ccc);border:1px solid var(--ui-card-border,#444);padding:2px 4px;width:100%;margin-bottom:3px;box-sizing:border-box;" value="${currentRoute?.name ?? ''}">
@@ -1089,11 +1135,16 @@ export class UIManager {
           barge: SHIP_COST, cargoship: CARGO_SHIP_COST, tanker: SUPERTANKER_COST,
         };
         const cost = costMap[factory] ?? truckCost;
+        if (depotFleet.length >= maxV) return;
         if (!canAfford(state.economy, cost)) return;
         spend(state.economy, cost);
         const id = generateId(state);
         const fn = factoryMap[factory];
-        if (fn) state.vehicles.push(fn(id, { x: depot.position.x, y: depot.position.y }));
+        if (fn) {
+          const vehicle = fn(id, { x: depot.position.x, y: depot.position.y });
+          vehicle.depotId = depot.id;
+          state.vehicles.push(vehicle);
+        }
         this._panelDirty = true;
         this.renderDepotPanel(state, uiState);
       });
@@ -1590,6 +1641,157 @@ export class UIManager {
       this.panelEl.style.display = 'none';
       this._lastMoneyHash = '';
     });
+  }
+
+  private renderDevToolsPanel(state: GameState, uiState: UIState): void {
+    if (!this.isDevMode) return;
+    const cfg = uiState.devTools.config;
+    const logs = uiState.devTools.logs;
+    const latest = logs.slice(-Math.min(logs.length, 400));
+    const tickRateEstimate = cfg.captureTicks ? 1 : 0;
+    const vehicleRateEstimate = cfg.captureVehicles ? Math.ceil(state.vehicles.length / Math.max(1, cfg.vehicleInterval)) : 0;
+    const estimatedLinesPerTick = tickRateEstimate + vehicleRateEstimate + (cfg.captureEconomy ? 2 : 0) + (cfg.captureObjectives ? 1 : 0);
+    const feasibilityTone = cfg.captureVehicles && cfg.maxEntries > 5000
+      ? 'High-detail capture is possible, but this config can get heavy in-browser during large late-game saves.'
+      : 'Full logging is feasible here because entries are capped in-memory and trimmed as new ones arrive.';
+    const logText = logs.map((entry) => `[T${entry.tick}][${entry.category.toUpperCase()}] ${entry.message}`).join('\n');
+
+    this.panelEl.style.width = '520px';
+    this.panelEl.style.maxWidth = 'calc(100vw - 32px)';
+    this.panelEl.style.display = 'block';
+    this.panelEl.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;">
+        <div>
+          <div style="color:var(--ui-text,#fff);font-size:15px;font-weight:bold;">🧪 Dev Simulation Lab</div>
+          <div style="color:var(--ui-text-muted,#888);font-size:11px;">Late-game playability checks, step controls, and structured debug capture.</div>
+        </div>
+        <button id="btn-close-panel" style="background:none;border:none;color:var(--ui-text-muted,#888);cursor:pointer;font-size:14px;">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:8px;margin-bottom:10px;">
+        <div style="padding:8px;border:1px solid var(--ui-card-border,#333);border-radius:6px;background:var(--ui-card-bg,#1a1a1a);">
+          <div style="color:var(--ui-text-muted,#777);font-size:10px;">World</div>
+          <div style="color:var(--ui-text,#fff);font-size:12px;">Seed ${state.seed}</div>
+          <div style="color:var(--ui-text-muted,#999);font-size:10px;">Tick ${state.time.tick}</div>
+        </div>
+        <div style="padding:8px;border:1px solid var(--ui-card-border,#333);border-radius:6px;background:var(--ui-card-bg,#1a1a1a);">
+          <div style="color:var(--ui-text-muted,#777);font-size:10px;">Economy</div>
+          <div style="color:var(--ui-positive,#4f4);font-size:12px;">$${state.economy.money.toLocaleString()}</div>
+          <div style="color:var(--ui-text-muted,#999);font-size:10px;">${state.economy.deliveriesCompleted} deliveries</div>
+        </div>
+        <div style="padding:8px;border:1px solid var(--ui-card-border,#333);border-radius:6px;background:var(--ui-card-bg,#1a1a1a);">
+          <div style="color:var(--ui-text-muted,#777);font-size:10px;">Network</div>
+          <div style="color:var(--ui-text,#fff);font-size:12px;">${state.routes.length} routes / ${state.vehicles.length} vehicles</div>
+          <div style="color:var(--ui-text-muted,#999);font-size:10px;">Speed ${state.time.speed === SimSpeed.Paused ? 'Paused' : state.time.speed === SimSpeed.Fast ? '2x' : state.time.speed === SimSpeed.Dev ? '20x' : '1x'}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:8px;margin-bottom:10px;">
+        <button data-devcmd="toggle_pause" style="padding:8px;font-family:monospace;font-size:11px;cursor:pointer;background:#2a1c00;color:#f6d37c;border:1px solid #7a5b1a;border-radius:5px;">${state.time.speed === SimSpeed.Paused ? '▶ Resume' : '⏸ Pause'}</button>
+        <button data-devcmd="step_1" style="padding:8px;font-family:monospace;font-size:11px;cursor:pointer;background:#002244;color:#8cf;border:1px solid #36a;border-radius:5px;">Step +1</button>
+        <button data-devcmd="step_10" style="padding:8px;font-family:monospace;font-size:11px;cursor:pointer;background:#002244;color:#8cf;border:1px solid #36a;border-radius:5px;">Step +10</button>
+        <button data-devcmd="grant_cash" style="padding:8px;font-family:monospace;font-size:11px;cursor:pointer;background:#0f2a12;color:#9ae89f;border:1px solid #2d7a39;border-radius:5px;">+$50k</button>
+        <button data-devcmd="unlock_all" style="padding:8px;font-family:monospace;font-size:11px;cursor:pointer;background:#2a1028;color:#f0a9f0;border:1px solid #82458a;border-radius:5px;">Unlock All Tech</button>
+        <button data-devcmd="clear_logs" style="padding:8px;font-family:monospace;font-size:11px;cursor:pointer;background:#2a1010;color:#f19999;border:1px solid #7a3333;border-radius:5px;">Clear Logs</button>
+      </div>
+      <div style="padding:10px;border:1px solid var(--ui-card-border,#333);border-radius:6px;background:rgba(255,255,255,0.03);margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
+          <span style="color:var(--ui-text,#fff);font-size:12px;font-weight:bold;">Capture Settings</span>
+          <span style="color:var(--ui-text-muted,#888);font-size:10px;">~${estimatedLinesPerTick} line(s)/tick at current settings</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:6px 14px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text,#ccc);"><input id="dev-capture-ticks" type="checkbox" ${cfg.captureTicks ? 'checked' : ''}> Tick summaries</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text,#ccc);"><input id="dev-capture-economy" type="checkbox" ${cfg.captureEconomy ? 'checked' : ''}> Economy changes</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text,#ccc);"><input id="dev-capture-objectives" type="checkbox" ${cfg.captureObjectives ? 'checked' : ''}> Delivery/objective changes</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text,#ccc);"><input id="dev-capture-vehicles" type="checkbox" ${cfg.captureVehicles ? 'checked' : ''}> Vehicle snapshots</label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ui-text,#ccc);">
+            <span>Vehicle interval</span>
+            <input id="dev-vehicle-interval" type="number" min="1" max="500" value="${cfg.vehicleInterval}" style="padding:4px;font-family:monospace;font-size:11px;border:1px solid var(--ui-btn-border,#555);border-radius:4px;background:var(--ui-input-bg,#111);color:var(--ui-text,#fff);">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ui-text,#ccc);">
+            <span>Max entries</span>
+            <input id="dev-max-entries" type="number" min="100" max="20000" step="100" value="${cfg.maxEntries}" style="padding:4px;font-family:monospace;font-size:11px;border:1px solid var(--ui-btn-border,#555);border-radius:4px;background:var(--ui-input-bg,#111);color:var(--ui-text,#fff);">
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text,#ccc);"><input id="dev-auto-scroll" type="checkbox" ${cfg.autoScroll ? 'checked' : ''}> Auto-scroll log viewer</label>
+          <div style="font-size:10px;color:var(--ui-text-muted,#888);line-height:1.45;">
+            ${feasibilityTone} Turn on vehicle snapshots mainly when investigating routing issues, not for every long run.
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px;">
+        <div>
+          <div style="color:var(--ui-text,#fff);font-size:12px;font-weight:bold;">Live Log</div>
+          <div style="color:var(--ui-text-muted,#888);font-size:10px;">Showing ${latest.length} newest entries out of ${logs.length}. Export saves the full buffer as plain text.</div>
+        </div>
+        <button id="dev-export-logs" style="padding:7px 10px;font-family:monospace;font-size:11px;cursor:${logs.length > 0 ? 'pointer' : 'not-allowed'};background:${logs.length > 0 ? '#10262a' : '#1d1d1d'};color:${logs.length > 0 ? '#9be6f0' : '#666'};border:1px solid ${logs.length > 0 ? '#2d7a88' : '#333'};border-radius:5px;" ${logs.length > 0 ? '' : 'disabled'}>Export .txt</button>
+      </div>
+      <div id="dev-log-view" style="height:340px;overflow:auto;padding:10px;border:1px solid var(--ui-card-border,#333);border-radius:6px;background:#05080c;font-family:monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;">${latest.length > 0 ? latest.map((entry) => {
+        const categoryColor = entry.category === 'economy' ? '#9ae89f'
+          : entry.category === 'objective' ? '#f0d17f'
+          : entry.category === 'tech' ? '#d7a8ff'
+          : entry.category === 'vehicle' ? '#8edcff'
+          : entry.category === 'tick' ? '#8fa8ff'
+          : '#cdd6df';
+        return `<div style="margin-bottom:4px;"><span style="color:#667085;">[T${entry.tick}]</span> <span style="color:${categoryColor};">[${entry.category.toUpperCase()}]</span> <span style="color:#d9e2ec;">${entry.message.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</span></div>`;
+      }).join('') : '<div style="color:#667085;">No logs yet. Let the sim run or use the step controls above.</div>'}</div>
+    `;
+
+    document.getElementById('btn-close-panel')?.addEventListener('click', () => {
+      uiState.activePanel = 'none';
+      this.panelEl.style.display = 'none';
+      this.panelEl.style.width = '290px';
+    });
+    this.panelEl.querySelectorAll<HTMLElement>('button[data-devcmd]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const command = btn.dataset['devcmd'] as 'step_1' | 'step_10' | 'toggle_pause' | 'clear_logs' | 'grant_cash' | 'unlock_all' | undefined;
+        if (!command) return;
+        this.onDevCommand?.(command);
+        this._panelDirty = true;
+      });
+    });
+
+    const bindCheckbox = (id: string, apply: (checked: boolean) => void) => {
+      document.getElementById(id)?.addEventListener('change', (event) => {
+        apply(Boolean((event.target as HTMLInputElement).checked));
+        this._panelDirty = true;
+      });
+    };
+    const bindNumber = (id: string, apply: (value: number) => void) => {
+      document.getElementById(id)?.addEventListener('change', (event) => {
+        const value = Number((event.target as HTMLInputElement).value);
+        apply(value);
+        this._panelDirty = true;
+      });
+    };
+
+    bindCheckbox('dev-capture-ticks', (checked) => { cfg.captureTicks = checked; });
+    bindCheckbox('dev-capture-economy', (checked) => { cfg.captureEconomy = checked; });
+    bindCheckbox('dev-capture-objectives', (checked) => { cfg.captureObjectives = checked; });
+    bindCheckbox('dev-capture-vehicles', (checked) => { cfg.captureVehicles = checked; });
+    bindCheckbox('dev-auto-scroll', (checked) => { cfg.autoScroll = checked; });
+    bindNumber('dev-vehicle-interval', (value) => { cfg.vehicleInterval = Math.max(1, Math.min(500, Math.floor(value) || 1)); });
+    bindNumber('dev-max-entries', (value) => {
+      cfg.maxEntries = Math.max(100, Math.min(20000, Math.floor(value) || 100));
+      if (uiState.devTools.logs.length > cfg.maxEntries) {
+        uiState.devTools.logs.splice(0, uiState.devTools.logs.length - cfg.maxEntries);
+      }
+    });
+
+    document.getElementById('dev-export-logs')?.addEventListener('click', () => {
+      if (logs.length === 0) return;
+      const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `transportsim-devlog-seed${state.seed}-tick${state.time.tick}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    });
+
+    const logView = document.getElementById('dev-log-view');
+    if (cfg.autoScroll && logView) {
+      logView.scrollTop = logView.scrollHeight;
+    }
   }
 
   // ─── Help / Tutorial panel ─────────────────────────────────────────────────

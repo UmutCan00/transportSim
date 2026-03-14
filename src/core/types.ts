@@ -76,6 +76,8 @@ export interface Industry {
   id: number;
   /** Procedurally generated unique name, e.g. "Blackrock Mine" */
   name: string;
+  /** Shared district/group label for this industry cluster */
+  districtName?: string;
   type: IndustryType;
   position: Vec2;
   size: Vec2;
@@ -118,6 +120,7 @@ export interface Station {
   type: BuildingType.Station;
   position: Vec2;
   size: Vec2;
+  incomingCargo: CargoStock;
   cargo: CargoStock;
   linkedIndustryId: number | null;
 }
@@ -138,6 +141,7 @@ export interface Airport {
   position: Vec2;
   size: Vec2;
   maxVehicles: number;
+  incomingCargo: CargoStock;
   cargo: CargoStock;
   linkedIndustryId: number | null;
   name: string;
@@ -150,6 +154,7 @@ export interface Seaport {
   position: Vec2;
   size: Vec2;
   maxVehicles: number;
+  incomingCargo: CargoStock;
   cargo: CargoStock;
   linkedIndustryId: number | null;
   name: string;
@@ -199,6 +204,7 @@ export interface Vehicle {
   id: number;
   vehicleType: VehicleType;
   model: VehicleModel;
+  depotId: number | null;
   position: Vec2;
   path: Vec2[];
   pathIndex: number;
@@ -372,9 +378,33 @@ export enum ToolType {
 
 // ── UI Panel ────────────────────────────────────────────
 
-export type ActivePanel = 'none' | 'tech' | 'objectives' | 'depot' | 'routes' | 'newgame' | 'help' | 'save' | 'money';
+export type ActivePanel = 'none' | 'tech' | 'objectives' | 'depot' | 'routes' | 'newgame' | 'help' | 'save' | 'money' | 'devtools';
 
 export type MapSize = 'small' | 'normal' | 'large' | 'huge';
+
+export type DevLogCategory = 'system' | 'tick' | 'economy' | 'objective' | 'tech' | 'vehicle';
+
+export interface DevLogEntry {
+  id: number;
+  tick: number;
+  category: DevLogCategory;
+  message: string;
+}
+
+export interface DevToolsConfig {
+  captureTicks: boolean;
+  captureEconomy: boolean;
+  captureObjectives: boolean;
+  captureVehicles: boolean;
+  vehicleInterval: number;
+  maxEntries: number;
+  autoScroll: boolean;
+}
+
+export interface DevToolsState {
+  config: DevToolsConfig;
+  logs: DevLogEntry[];
+}
 
 // ── UI State (not part of simulation) ───────────────────
 
@@ -384,11 +414,13 @@ export interface UIState {
   selectedTile: Vec2 | null;
   selectedEntityId: number | null;
   selectedEntityType: 'industry' | 'building' | 'vehicle' | null;
+  quickRouteStartStationId: number | null;
   activePanel: ActivePanel;
   /** Start tile for line-drag road/rail placement */
   lineDragStart: Vec2 | null;
   /** Toast notifications queue */
   toasts: { id: number; msg: string; ttl: number }[];
+  devTools: DevToolsState;
 }
 
 // ── GameState ───────────────────────────────────────────

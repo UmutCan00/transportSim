@@ -1,4 +1,4 @@
-import type { GameState } from '../../src/core/types.ts';
+import type { Difficulty, GameState, MapSize, Theme } from '../../src/core/types.ts';
 import type { TechId } from '../../src/core/types.ts';
 
 export interface SimProfile {
@@ -14,13 +14,25 @@ export interface SimProfile {
   techDelayChance: number;
   candidatePool: number;
   roadCostWeight: number;
+  railAffinity: number;
+  airAffinity: number;
+  seaAffinity: number;
+  railDistanceThreshold: number;
+  airDistanceThreshold: number;
+  seaDistanceThreshold: number;
+  modalRouteCap: number;
 }
+
+export type SimMode = 'road' | 'rail' | 'air' | 'sea';
 
 export interface SimRunOptions {
   seed: number;
   ticks: number;
   verbose?: boolean;
   profile: SimProfile;
+  mapSize?: MapSize;
+  difficulty?: Difficulty;
+  theme?: Theme;
 }
 
 export interface SpendBreakdown {
@@ -33,6 +45,7 @@ export interface SpendBreakdown {
 
 export interface RouteRecord {
   routeId: number;
+  mode: SimMode;
   pickupStation: number;
   dropoffStation: number;
   cargoType: string;

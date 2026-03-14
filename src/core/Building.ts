@@ -8,12 +8,14 @@ import {
 } from '../constants.ts';
 
 export function createStation(id: number, position: Vec2): Station {
+  const laneCapacity = Math.floor(STATION_CARGO_CAPACITY / 2);
   return {
     id,
     type: BuildingType.Station,
     position,
     size: { x: 1, y: 1 },
-    cargo: { type: CargoType.Coal, amount: 0, capacity: STATION_CARGO_CAPACITY },
+    incomingCargo: { type: CargoType.Coal, amount: 0, capacity: laneCapacity },
+    cargo: { type: CargoType.Coal, amount: 0, capacity: laneCapacity },
     linkedIndustryId: null,
   };
 }
@@ -42,6 +44,8 @@ export function createTrainYard(id: number, position: Vec2): Depot {
 
 export function createAirport(id: number, position: Vec2, tier: 'small' | 'large' = 'small'): Airport {
   const isLarge = tier === 'large';
+  const totalCapacity = isLarge ? STATION_CARGO_CAPACITY * 3 : STATION_CARGO_CAPACITY;
+  const laneCapacity = Math.floor(totalCapacity / 2);
   return {
     id,
     type: BuildingType.Airport,
@@ -49,7 +53,8 @@ export function createAirport(id: number, position: Vec2, tier: 'small' | 'large
     position,
     size: isLarge ? { x: 3, y: 3 } : { x: 2, y: 2 },
     maxVehicles: isLarge ? AIRPORT_LARGE_MAX_PLANES : AIRPORT_SMALL_MAX_PLANES,
-    cargo: { type: CargoType.Goods, amount: 0, capacity: isLarge ? STATION_CARGO_CAPACITY * 3 : STATION_CARGO_CAPACITY },
+    incomingCargo: { type: CargoType.Goods, amount: 0, capacity: laneCapacity },
+    cargo: { type: CargoType.Goods, amount: 0, capacity: laneCapacity },
     linkedIndustryId: null,
     name: `${tier === 'large' ? 'Int\'l ' : ''}Airport #${id}`,
   };
@@ -57,6 +62,8 @@ export function createAirport(id: number, position: Vec2, tier: 'small' | 'large
 
 export function createSeaport(id: number, position: Vec2, tier: 'small' | 'large' = 'small'): Seaport {
   const isLarge = tier === 'large';
+  const totalCapacity = isLarge ? STATION_CARGO_CAPACITY * 4 : STATION_CARGO_CAPACITY * 2;
+  const laneCapacity = Math.floor(totalCapacity / 2);
   return {
     id,
     type: BuildingType.Seaport,
@@ -64,7 +71,8 @@ export function createSeaport(id: number, position: Vec2, tier: 'small' | 'large
     position,
     size: isLarge ? { x: 3, y: 3 } : { x: 2, y: 2 },
     maxVehicles: isLarge ? SEAPORT_LARGE_MAX_SHIPS : SEAPORT_SMALL_MAX_SHIPS,
-    cargo: { type: CargoType.Goods, amount: 0, capacity: isLarge ? STATION_CARGO_CAPACITY * 4 : STATION_CARGO_CAPACITY * 2 },
+    incomingCargo: { type: CargoType.Goods, amount: 0, capacity: laneCapacity },
+    cargo: { type: CargoType.Goods, amount: 0, capacity: laneCapacity },
     linkedIndustryId: null,
     name: `${tier === 'large' ? 'Mega ' : ''}Seaport #${id}`,
   };
